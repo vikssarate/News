@@ -105,9 +105,8 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 
 <script>
 /* ---------------- Config ---------------- */
-// If you deploy a Cloudflare Worker as an edge proxy, put its URL here (no trailing slash).
-// Example: const FAST_PROXY = "https://news-proxy-xxxxx.workers.dev";
-const FAST_PROXY = ""; // leave empty to skip
+// Use your Cloudflare Worker as the first-hop proxy (no trailing slash)
+const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
 
 /* ---------- Storage & defaults ---------- */
 const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
@@ -184,12 +183,10 @@ function renderPills(){
   const allWords = wordsForActive();
   const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
 
-  // Always show ALL pill; make it active when nothing selected
   const allPill = el("span",{class:"pill word"+(selected.length===0?" active":""),role:"button"},"All");
   allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
   holder.appendChild(allPill);
 
-  // Word pills
   allWords.forEach(w=>{
     const sp = el("span",{class:"pill word"+(selected.includes(w)?" active":""),role:"button","data-word":w},escapeHtml(w));
     sp.onclick = ()=>{
@@ -204,7 +201,6 @@ function renderPills(){
     holder.appendChild(sp);
   });
 
-  // Source chips (summary)
   const siteIdx = activeSites();
   if (siteIdx.length){
     holder.appendChild(el("span",{class:"pill action"},"•"));
@@ -294,25 +290,35 @@ function fetchTextWithTimeout(url, ms = 10000) {
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
+// Resolve on first success, reject only if all fail
+function firstFulfilled(promises) {
+  return new Promise((resolve, reject) => {
+    let pending = promises.length, lastErr;
+    promises.forEach(p => Promise.resolve(p).then(resolve, e => {
+      lastErr = e; if (--pending === 0) reject(lastErr);
+    }));
+  });
+}
 
 // Prefer edge proxy (if set) → direct → public mirrors
 async function fetchFeed(url) {
-  const tries = []
-  if (FAST_PROXY) tries.push(`${FAST_PROXY}/?url=${encodeURIComponent(url)}`);
-  tries.push(
-    url,
-    `https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`,
-    `https://r.jina.ai/http/${url}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-  );
-  let lastErr;
-  for (const u of tries) {
-    try {
-      const tx = await fetchTextWithTimeout(u, 10000);
-      if (tx && tx.length > 80) return tx;
-    } catch (e) { lastErr = e; }
+  const ttl = 180; // seconds: cache a few minutes for speed without going stale
+  const tries = [];
+
+  if (FAST_PROXY) {
+    const proxied = `${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`;
+    tries.push(fetchTextWithTimeout(proxied, 10000));
   }
-  throw lastErr || new Error("All fallbacks failed");
+
+  // fallbacks if proxy blocked or down
+  tries.push(
+    fetchTextWithTimeout(url, 10000),
+    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`, 10000),
+    fetchTextWithTimeout(`https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`, 10000),
+    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, 10000)
+  );
+
+  return firstFulfilled(tries);
 }
 
 function parseItems(xmlText, siteName) {
@@ -338,7 +344,6 @@ function parseItems(xmlText, siteName) {
 }
 
 /* ---------- Filter & render ---------- */
-// Whole-word / phrase matcher
 function buildMatcher(wordsCSV){
   const canon = s => (" " + String(s||"")
     .toLowerCase()
@@ -398,7 +403,7 @@ async function refresh(){
     $("#results").innerHTML = (cards || `<div class="card">Fetching… (sources ${done}/${siteIdx.length})</div>`) + progress;
   }
 
-  const WORKERS = Math.min(6, queue.length);   // snappier feel
+  const WORKERS = Math.min(6, queue.length);
   await Promise.all(new Array(WORKERS).fill(0).map(async ()=>{
     while (queue.length){
       const i = queue.shift();
