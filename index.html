@@ -166,24 +166,30 @@ function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]
 function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
 function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
 
+/* ---------- Pills (with persistent selection & "All" always visible) ---------- */
 function renderPills(){
   const holder = $("#pillLine");
   holder.innerHTML = "";
   const t = activeTopic(); if(!t) return;
+
   const allWords = wordsForActive();
   const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
 
-  if (selected.length){
-    const allPill = el("span",{class:"pill word action","role":"button"},"All");
-    allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
-    holder.appendChild(allPill);
-  }
+  // Always show ALL pill; make it active when nothing selected
+  const allPill = el(
+    "span",
+    { class:"pill word" + (selected.length===0 ? " active" : ""), role:"button" },
+    "All"
+  );
+  allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
+  holder.appendChild(allPill);
 
+  // Word pills
   allWords.forEach(w=>{
-    const sp = el("span",{class:"pill word"+(selected.includes(w)?" active":""),"role":"button","data-word":w},escapeHtml(w));
+    const sp = el("span",{class:"pill word"+(selected.includes(w)?" active":""),role:"button","data-word":w},escapeHtml(w));
     sp.onclick = ()=>{
       const set = new Set(ui.sel[t.id]||[]);
-      if (set.has(w)) set.delete(w); else set.add(w);
+      set.has(w)?set.delete(w):set.add(w);
       ui.sel[t.id] = Array.from(set);
       if (ui.sel[t.id].length===0) delete ui.sel[t.id];
       save(SK.ui,ui);
@@ -193,6 +199,7 @@ function renderPills(){
     holder.appendChild(sp);
   });
 
+  // Source chips (summary)
   const siteIdx = activeSites();
   if (siteIdx.length){
     holder.appendChild(el("span",{class:"pill action"},"•"));
