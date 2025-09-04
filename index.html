@@ -141,7 +141,11 @@ function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Mat
 /* ---------- DOM helpers ---------- */
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","<": "&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){
+  return String(s||"").replace(/[&<>"']/g, m => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
+  }[m]));
+}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v)return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -240,31 +244,53 @@ function fetchTextWithTimeout(url, ms=9000){
 }
 function firstFulfilled(arr){
   return new Promise((res,rej)=>{
-    let n=0, errs=[];
-    arr.forEach((p,i)=>Promise.resolve(p).then(res,e=>{errs[i]=e; if(++n===arr.length) rej(errs[0]||e);}));
+    let failed=0, lastErr;
+    arr.forEach(p=>Promise.resolve(p).then(res, e=>{ lastErr=e; if(++failed===arr.length) rej(lastErr); }));
   });
 }
 function fetchFeed(url){
   const tries=[
-    url,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`
-  ].map(u=>fetchTextWithTimeout(u,9000));
+    fetchTextWithTimeout(url,9000),
+    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,9000),
+    // try both r.jina forms (Safari can be picky)
+    fetchTextWithTimeout(`https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`,9000),
+    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`,9000)
+  ];
   return firstFulfilled(tries);
 }
+
+// --- XML parsing with safe handling of content:encoded ---
 function parseItems(xmlText, sourceName){
   let doc; try{doc=new DOMParser().parseFromString(xmlText,"text/xml");}catch(_){return[];}
   const out=[], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
   const T=(el,sel)=> (el.querySelector(sel)?.textContent||"").trim();
+  const contentEncoded = el => {
+    const n = el.getElementsByTagName("content:encoded");
+    return n && n[0] ? (n[0].textContent||"").trim() : "";
+  };
+  const strip = s => (s||"").replace(/<[^>]*>/g,"").trim();
+
   items.forEach(it=>{
     const link=T(it,"link")||it.querySelector("link")?.getAttribute("href")||"";
     const pub=new Date(T(it,"pubDate")||T(it,"date")||Date.now());
-    out.push({title:T(it,"title"),link,date:pub,source:sourceName,summary:(T(it,"description")||T(it,"content:encoded")).replace(/<[^>]*>/g,"").trim()});
+    out.push({
+      title:T(it,"title"),
+      link,
+      date:pub,
+      source:sourceName,
+      summary:strip(T(it,"description")||contentEncoded(it))
+    });
   });
   entries.forEach(en=>{
     const link=en.querySelector("link")?.getAttribute("href")||T(en,"link");
     const pub=new Date(T(en,"updated")||T(en,"published")||Date.now());
-    out.push({title:T(en,"title"),link,date:pub,source:sourceName,summary:(T(en,"summary")||T(en,"content")).replace(/<[^>]*>/g,"").trim()});
+    out.push({
+      title:T(en,"title"),
+      link,
+      date:pub,
+      source:sourceName,
+      summary:strip(T(en,"summary")||T(en,"content"))
+    });
   });
   return out.filter(x=>x.title&&x.link);
 }
