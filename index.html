@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Tabbed News Filter — Headword & Source Based</title>
+<title>Current Affairs News Filter — Headword & Source Based</title>
 <style>
 :root{--bg:#0f1220;--card:#181c2f;--ink:#eef1ff;--muted:#9aa3c7;--line:#2a3052;--ok:#7bd88f;--warn:#ffd166;--bad:#ff7575;--accent:#6ca8ff}
 *{box-sizing:border-box}
@@ -39,23 +39,18 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 </head>
 <body>
 <header>
-  <h1>Tabbed News Filter</h1>
-  <div class="row">
-    <span class="note">Local-only • RSS/Atom in your browser</span>
-  </div>
+  <h1>Current Affairs News Filter</h1>
+  <div class="row"><span class="note">Local-only • RSS/Atom in your browser</span></div>
 </header>
 
 <div class="wrap">
-
-  <!-- Tabs + Filters -->
   <div class="panel">
     <div class="tabs" id="tabs"></div>
-
     <div class="row">
       <label>Newer than:
         <select id="age">
-          <option value="1d">24 hours</option>
-          <option value="3d" selected>3 days</option>
+          <option value="1d" selected>24 hours</option>
+          <option value="3d">3 days</option>
           <option value="7d">7 days</option>
           <option value="30d">30 days</option>
           <option value="">Any time</option>
@@ -68,11 +63,10 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
       <input id="loadCfg" type="file" accept="application/json" class="hide"/>
       <button id="manageBtn">Manage</button>
     </div>
-
     <div id="pillLine" class="pills"></div>
   </div>
 
-  <!-- Manage panel -->
+  <!-- Manage -->
   <div class="panel hide" id="managePanel">
     <div class="grid">
       <div>
@@ -85,7 +79,6 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
         <div class="row" id="tSites" style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px"></div>
         <div class="row"><button id="addTopic" class="primary">Add topic</button></div>
       </div>
-
       <div>
         <h3 style="margin:0 0 6px 0">News Sites (RSS/Atom)</h3>
         <div class="note">Add any RSS/Atom feed. (The app auto-handles CORS via safe fallbacks.)</div>
@@ -108,84 +101,74 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 </footer>
 
 <script>
-/* ----------------- Storage & Defaults ----------------- */
-const SK = {
-  sites:  "newsfilter.sites.v1",
-  topics: "newsfilter.topics.v1",
-  ui:     "newsfilter.ui.v1"
-};
+/* ---------- Storage & defaults ---------- */
+const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
 
 let sites = load(SK.sites) || [
-  {name:"BBC World",            url:"https://feeds.bbci.co.uk/news/world/rss.xml"},
-  {name:"Reuters India Top",    url:"https://feeds.reuters.com/reuters/INtopNews"},
-  {name:"The Hindu — National", url:"https://www.thehindu.com/news/national/feeder/default.rss"},
-  {name:"Indian Express — India", url:"https://indianexpress.com/section/india/feed/"},
-  {name:"LiveMint",             url:"https://www.livemint.com/rss/homepage"}
+  {name:"Google News — India (Top)", url:"https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — ISRO",       url:"https://news.google.com/rss/search?q=ISRO&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Appointments India", url:"https://news.google.com/rss/search?q=appointment+OR+%22takes+charge%22+OR+%22assumes+office%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
+  {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
+  {name:"The Hindu — National",      url:"https://www.thehindu.com/news/national/feeder/default.rss"},
+  {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
+  {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
+  {name:"The Print — All",           url:"https://theprint.in/feed/"},
+  {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
 ];
 
 let topics = load(SK.topics) || [
-  {id:uuid(), name:"Govt Exams", words:"ssc, upsc, ibps, rrb, mpsc, admit card, hall ticket, result, recruitment", siteIds:sites.map((_,i)=>i)},
-  {id:uuid(), name:"Banking/Finance", words:"rbi, inflation, repo rate, ipo, nps, lic, loan, bank exam", siteIds:sites.map((_,i)=>i)},
-  {id:uuid(), name:"Tech", words:"ai, artificial intelligence, startup, gadget, semiconductor, chip, 5g, data center, open source", siteIds:sites.map((_,i)=>i)}
+  {id:uid(), name:"Appointments", words:"appointed, takes charge, assumes office, named as, elected as, reappointed, CEO, chairman, governor, chief secretary, CMD, MD, director general, DG, CJI, chief justice, army chief, navy chief, air chief, vice chancellor", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Obituaries", words:"passes away, dies, dead, obituary, veteran, noted, eminent, padma awardee, former, ex-, legend", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"ISRO / Space", words:"ISRO, PSLV, GSLV, LVM3, SSLV, Chandrayaan, Aditya-L1, XpoSat, satellite, payload, launch, mission, spaceport, Satish Dhawan, INSPACe", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Defence & Security", words:"DRDO, missile, Agni, Pralay, BrahMos, induction, procurement, trial, exercise, Navy, Army, IAF, Coast Guard, border, LAC", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Economy & RBI", words:"RBI, MPC, repo rate, inflation, CPI, WPI, GDP, IIP, GST collection, current account deficit, forex reserves, PMI", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Awards & Honours", words:"award, awards, won, conferred, receives, Bharat Ratna, Padma, Arjuna, Dronacharya, Khel Ratna, Sahitya Akademi, Booker, Nobel, Ramon Magsaysay", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Science & Environment", words:"scientists, research, discovery, breakthrough, climate, monsoon, cyclone, IMD, heatwave, wildlife, sanctuary, national park, tiger census, Ramsar", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"International / Summits", words:"summit, bilateral, MoU, G20, SCO, BRICS, Quad, UNSC, UNGA, state visit, foreign minister, strategic dialogue", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Sports Highlights", words:"wins, clinches, beats, champion, world cup, asian games, olympics, national games, records", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Govt Schemes / Policy", words:"scheme, yojana, portal, guidelines, cabinet approves, bill passed, ordinance, notification, gazette, draft policy", siteIds:sites.map((_,i)=>i)}
 ];
 
-let ui = load(SK.ui) || {activeTopicId: topics[0]?.id || null, age:"3d", dedupe:true};
+let ui = load(SK.ui) || {activeTopicId: topics[0]?.id || null, age:"1d", dedupe:true};
 
-function load(k){ try{ return JSON.parse(localStorage.getItem(k)||"null"); }catch(_){ return null } }
+function load(k){ try{return JSON.parse(localStorage.getItem(k)||"null");}catch(_){return null} }
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
-function uuid(){ return crypto.randomUUID ? crypto.randomUUID() : String(Date.now())+Math.random().toString(16).slice(2); }
+function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 
-/* ----------------- DOM helpers ----------------- */
+/* ---------- DOM helpers ---------- */
 const $ = s => document.querySelector(s);
-function el(tag, attrs={}, html=""){
-  const e = document.createElement(tag);
-  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k,v);
-  if (html) e.innerHTML = html;
-  return e;
-}
-function escapeHtml(s){ return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m])) }
-function ago(d){
-  const ms = Date.now()-d.getTime();
-  const mins = Math.round(ms/60000);
-  if (mins<60) return mins+"m";
-  const h = Math.round(mins/60);
-  if (h<48) return h+"h";
-  const days = Math.round(h/24);
-  return days+"d";
-}
-function parseAgeVal(v){
-  if (!v) return null;
-  const m = /^(\d+)([dm])$/.exec(v);
-  if (!m) return null;
-  const n = +m[1], unit = m[2];
-  const ms = unit==="d" ? n*24*3600e3 : n*60e3;
-  return new Date(Date.now()-ms);
-}
+function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","<": "&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
+function parseAgeVal(v){if(!v)return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
-/* ----------------- UI render ----------------- */
+/* ---------- UI ---------- */
 function renderTabs(){
   const bar=$("#tabs"); bar.innerHTML="";
   topics.forEach(t=>{
-    const b = el("button",{class:"tabbtn"+(t.id===ui.activeTopicId?" active":"")}, escapeHtml(t.name));
-    b.onclick=()=>{ ui.activeTopicId=t.id; save(SK.ui,ui); renderTabs(); renderPills(); refresh(); };
+    const b=el("button",{class:"tabbtn"+(t.id===ui.activeTopicId?" active":"")},escapeHtml(t.name));
+    b.onclick=()=>{ui.activeTopicId=t.id;save(SK.ui,ui);renderTabs();renderPills();refresh();};
     bar.appendChild(b);
   });
 }
-function wordsForActive(){
-  const t = topics.find(x=>x.id===ui.activeTopicId);
-  return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);
-}
+function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]||null;}
+function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
+function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
 function renderPills(){
   $("#pillLine").innerHTML = wordsForActive().map(w=>`<span class="pill">${escapeHtml(w)}</span>`).join("") +
     (activeSites().length? " " + activeSites().map(i=>`<span class="pill source-chip">${escapeHtml(sites[i].name)}</span>`).join(" ") : "");
 }
+
+/* ---------- Manage ---------- */
 function renderManage(){
-  // Topics list (small summary + delete)
   const tBox=$("#topicsList"); tBox.innerHTML="";
   topics.forEach(t=>{
     const wrap=el("div",{class:"card"});
-    const sNames = t.siteIds.map(i=>sites[i]?.name).filter(Boolean).join(", ");
-    wrap.innerHTML = `
+    const names=t.siteIds.map(i=>sites[i]?.name).filter(Boolean).join(", ");
+    wrap.innerHTML=`
       <div class="row" style="justify-content:space-between">
         <div><b>${escapeHtml(t.name)}</b></div>
         <div class="row">
@@ -193,58 +176,50 @@ function renderManage(){
           <button data-del="${t.id}" style="border-color:var(--bad);color:var(--bad)">Delete</button>
         </div>
       </div>
-      <div class="note" style="margin-top:6px"><span class="k">Headwords:</span> ${escapeHtml(t.words)}</div>
-      <div class="note" style="margin-top:4px"><span class="k">Sites:</span> ${escapeHtml(sNames||"(all)")}</div>`;
+      <div class="note" style="margin-top:6px"><b>Headwords:</b> ${escapeHtml(t.words)}</div>
+      <div class="note" style="margin-top:4px"><b>Sites:</b> ${escapeHtml(names||"(all)")}</div>`;
     wrap.querySelector(`[data-del="${t.id}"]`).onclick=()=>{
-      if (!confirm(`Delete topic "${t.name}"?`)) return;
-      topics = topics.filter(x=>x.id!==t.id);
-      if (ui.activeTopicId===t.id) ui.activeTopicId = topics[0]?.id || null;
-      save(SK.topics,topics); save(SK.ui,ui); renderTabs(); renderPills(); renderManage(); refresh();
+      if(!confirm(`Delete topic "${t.name}"?`))return;
+      topics=topics.filter(x=>x.id!==t.id);
+      if(ui.activeTopicId===t.id)ui.activeTopicId=topics[0]?.id||null;
+      save(SK.topics,topics);save(SK.ui,ui);renderTabs();renderPills();renderManage();refresh();
     };
-    wrap.querySelector(`[data-ed="${t.id}"]`).onclick=()=> editTopic(t.id);
+    wrap.querySelector(`[data-ed="${t.id}"]`).onclick=()=>editTopic(t.id);
     tBox.appendChild(wrap);
   });
 
-  // Sites list
   const sBox=$("#sitesList"); sBox.innerHTML="";
   sites.forEach((s,i)=>{
     const row=el("div",{class:"row"});
-    row.innerHTML = `
-      <span class="source-chip">${escapeHtml(s.name)}</span>
+    row.innerHTML=`<span class="source-chip">${escapeHtml(s.name)}</span>
       <small class="note" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.url)}</small>
       <button data-rm="${i}" style="border-color:var(--bad);color:var(--bad)">Remove</button>`;
     row.querySelector(`[data-rm="${i}"]`).onclick=()=>{
-      if (!confirm(`Remove site "${s.name}"?`)) return;
-      sites.splice(i,1);
-      topics.forEach(t=> t.siteIds = (t.siteIds||[]).filter(id=>id!==i));
-      save(SK.sites,sites); save(SK.topics,topics); renderManage(); renderPills(); refresh();
+      if(!confirm(`Remove site "${s.name}"?`))return;
+      sites.splice(i,1);topics.forEach(t=>t.siteIds=(t.siteIds||[]).filter(id=>id!==i));
+      save(SK.sites,sites);save(SK.topics,topics);renderManage();renderPills();refresh();
     };
     sBox.appendChild(row);
   });
 
-  // Site chooser for “Add topic”
   const tSites=$("#tSites"); tSites.innerHTML="";
   sites.forEach((s,i)=>{
-    const lab = el("label",{style:"display:inline-flex;gap:6px;align-items:center;margin-right:8px;margin-bottom:6px"});
-    lab.innerHTML = `<input type="checkbox" data-site="${i}"> ${escapeHtml(s.name)}`;
+    const lab=el("label",{style:"display:inline-flex;gap:6px;align-items:center;margin-right:8px;margin-bottom:6px"});
+    lab.innerHTML=`<input type="checkbox" data-site="${i}"> ${escapeHtml(s.name)}`;
     tSites.appendChild(lab);
   });
 }
 function editTopic(id){
-  const t = topics.find(x=>x.id===id); if (!t) return;
-  $("#tName").value = t.name;
-  $("#tWords").value = t.words;
-  document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>{
-    cb.checked = t.siteIds?.includes(+cb.dataset.site) || false;
-  });
+  const t=topics.find(x=>x.id===id); if(!t)return;
+  $("#tName").value=t.name; $("#tWords").value=t.words;
+  document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=t.siteIds?.includes(+cb.dataset.site)||false);
   $("#addTopic").textContent="Save changes";
   $("#addTopic").onclick=()=>{
-    t.name = $("#tName").value.trim() || t.name;
-    t.words = $("#tWords").value.trim();
-    t.siteIds = Array.from(document.querySelectorAll('#tSites input[type="checkbox"]:checked')).map(cb=>+cb.dataset.site);
+    t.name=$("#tName").value.trim()||t.name;
+    t.words=$("#tWords").value.trim();
+    t.siteIds=Array.from(document.querySelectorAll('#tSites input[type="checkbox"]:checked')).map(cb=>+cb.dataset.site);
     save(SK.topics,topics);
-    $("#tName").value=""; $("#tWords").value="";
-    document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    $("#tName").value=""; $("#tWords").value=""; document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=false);
     $("#addTopic").textContent="Add topic"; $("#addTopic").onclick=addTopic;
     renderTabs(); renderPills(); renderManage(); refresh();
   };
@@ -253,159 +228,131 @@ function addTopic(){
   const name=$("#tName").value.trim(); if(!name) return;
   const words=$("#tWords").value.trim();
   const siteIds=Array.from(document.querySelectorAll('#tSites input[type="checkbox"]:checked')).map(cb=>+cb.dataset.site);
-  topics.push({id:uuid(), name, words, siteIds});
-  save(SK.topics,topics);
+  topics.push({id:uid(), name, words, siteIds}); save(SK.topics,topics);
   $("#tName").value=""; $("#tWords").value=""; document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=false);
   renderTabs(); renderPills(); renderManage();
 }
 
-/* ----------------- Active selection ----------------- */
-function activeTopic(){ return topics.find(x=>x.id===ui.activeTopicId) || topics[0] || null; }
-function activeSites(){
-  const t = activeTopic(); if (!t) return [];
-  const ids = (t.siteIds && t.siteIds.length) ? t.siteIds : sites.map((_,i)=>i);
-  return ids.filter(i => sites[i]); // valid only
+/* ---------- Fetch & parse (parallel + timeouts + fallbacks) ---------- */
+function fetchTextWithTimeout(url, ms=9000){
+  const ctrl=new AbortController(); const id=setTimeout(()=>ctrl.abort(),ms);
+  return fetch(url,{signal:ctrl.signal}).then(r=>{ if(!r.ok)throw new Error(r.status+" "+r.statusText); return r.text(); }).finally(()=>clearTimeout(id));
 }
-
-/* ----------------- Fetch & Parse RSS ----------------- */
-async function fetchFeed(url){
-  // Try direct, then AllOrigins, then r.jina.ai
-  const tries = [
+function firstFulfilled(arr){
+  return new Promise((res,rej)=>{
+    let n=0, errs=[];
+    arr.forEach((p,i)=>Promise.resolve(p).then(res,e=>{errs[i]=e; if(++n===arr.length) rej(errs[0]||e);}));
+  });
+}
+function fetchFeed(url){
+  const tries=[
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`
-  ];
-  for (const u of tries){
-    try{
-      const r = await fetch(u);
-      if (r.ok){
-        const tx = await r.text();
-        if (tx && tx.length>30) return tx;
-      }
-    }catch(_){}
-  }
-  throw new Error("Fetch failed: " + url);
+  ].map(u=>fetchTextWithTimeout(u,9000));
+  return firstFulfilled(tries);
 }
-
-function parseItems(xmlText, siteName){
-  let doc;
-  try{ doc = new DOMParser().parseFromString(xmlText,"text/xml"); }catch(_){ return []; }
-  const out=[];
-  const items = [...doc.querySelectorAll("item")];
-  const entries = [...doc.querySelectorAll("entry")];
-  const getText = (el,sel) => (el.querySelector(sel)?.textContent || "").trim();
+function parseItems(xmlText, sourceName){
+  let doc; try{doc=new DOMParser().parseFromString(xmlText,"text/xml");}catch(_){return[];}
+  const out=[], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
+  const T=(el,sel)=> (el.querySelector(sel)?.textContent||"").trim();
   items.forEach(it=>{
-    const link = getText(it,"link") || (it.querySelector("link")?.getAttribute("href")||"");
-    const pub = new Date(getText(it,"pubDate") || getText(it,"date") || Date.now());
-    out.push({
-      title: getText(it,"title"),
-      link, date: pub,
-      source: siteName || getText(doc,"channel>title") || hostname(link),
-      summary: (getText(it,"description") || getText(it,"content:encoded")).replace(/<[^>]*>/g,"").trim()
-    });
+    const link=T(it,"link")||it.querySelector("link")?.getAttribute("href")||"";
+    const pub=new Date(T(it,"pubDate")||T(it,"date")||Date.now());
+    out.push({title:T(it,"title"),link,date:pub,source:sourceName,summary:(T(it,"description")||T(it,"content:encoded")).replace(/<[^>]*>/g,"").trim()});
   });
   entries.forEach(en=>{
-    const link = en.querySelector("link")?.getAttribute("href") || getText(en,"link");
-    const pub = new Date(getText(en,"updated") || getText(en,"published") || Date.now());
-    out.push({
-      title: getText(en,"title"),
-      link, date: pub,
-      source: siteName || getText(doc,"feed>title") || hostname(link),
-      summary: (getText(en,"summary") || getText(en,"content")).replace(/<[^>]*>/g,"").trim()
-    });
+    const link=en.querySelector("link")?.getAttribute("href")||T(en,"link");
+    const pub=new Date(T(en,"updated")||T(en,"published")||Date.now());
+    out.push({title:T(en,"title"),link,date:pub,source:sourceName,summary:(T(en,"summary")||T(en,"content")).replace(/<[^>]*>/g,"").trim()});
   });
-  return out.filter(x=>x.title && x.link);
+  return out.filter(x=>x.title&&x.link);
 }
-function hostname(u){ try{ return new URL(u).hostname.replace(/^www\./,''); }catch(_){ return "" } }
 
-/* ----------------- Filter & Render ----------------- */
+/* ---------- Filter & render ---------- */
 function buildMatcher(words){
-  const toks = words.split(",").map(s=>s.trim()).filter(Boolean);
-  if (!toks.length) return ()=>true;
-  const re = new RegExp(toks.map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join("|"), "i");
+  const toks=words.split(",").map(s=>s.trim()).filter(Boolean);
+  if(!toks.length) return ()=>true;
+  const re=new RegExp(toks.map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join("|"),"i");
   return (title,summary)=> re.test(title||"") || re.test(summary||"");
 }
-function normalizeTitle(s){ return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim(); }
+function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();}
 
 async function refresh(){
-  const t = activeTopic(); if (!t){ $("#results").innerHTML=""; return; }
+  const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  $("#age").value = ui.age || "3d"; $("#dedupe").checked = !!ui.dedupe;
+  $("#age").value=ui.age||"1d"; $("#dedupe").checked=!!ui.dedupe;
 
-  const siteIdx = activeSites();
-  const since = parseAgeVal($("#age").value);
-  const matcher = buildMatcher(t.words||"");
-  const dedupe = $("#dedupe").checked;
+  const siteIdx=activeSites();
+  const since=parseAgeVal($("#age").value);
+  const match=buildMatcher(t.words||"");
+  const wantDedupe=$("#dedupe").checked;
 
-  const allItems=[];
-  for (const i of siteIdx){
-    const s = sites[i];
-    try{
-      const xml = await fetchFeed(s.url);
-      const items = parseItems(xml, s.name);
-      items.forEach(it => allItems.push(it));
-    }catch(e){
-      allItems.push({title:`Failed to fetch ${s.name}`, link:"#", date:new Date(), source:s.name, summary:String(e)});
-    }
+  const tasks=siteIdx.map(async i=>{
+    const s=sites[i];
+    try{ const xml=await fetchFeed(s.url); return {ok:true,items:parseItems(xml,s.name)};}
+    catch(e){ return {ok:false,err:`${s.name}: ${String(e)}`} }
+  });
+
+  const results=await Promise.allSettled(tasks);
+  const all=[], errs=[];
+  for(const r of results){
+    if(r.status==="fulfilled"){ if(r.value.ok) all.push(...r.value.items); else errs.push(r.value.err); }
+    else errs.push(String(r.reason));
   }
 
-  // sort, time filter, keyword filter
-  let filtered = allItems
-    .filter(it => !since || it.date >= since)
-    .filter(it => matcher(it.title, it.summary))
-    .sort((a,b)=> b.date - a.date);
+  let filtered = all
+    .filter(it=>!since || it.date>=since)
+    .filter(it=>match(it.title,it.summary))
+    .sort((a,b)=>b.date-a.date);
 
-  if (dedupe){
+  if(wantDedupe){
     const seen=new Set();
-    filtered = filtered.filter(it=>{
-      const k = normalizeTitle(it.title);
-      if (seen.has(k)) return false;
-      seen.add(k); return true;
-    });
+    filtered=filtered.filter(it=>{const k=normalizeTitle(it.title); if(seen.has(k))return false; seen.add(k); return true;});
   }
 
-  // render
-  $("#results").innerHTML = filtered.map(it => `
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div><a href="${it.link}" target="_blank" rel="noopener"><b>${escapeHtml(it.title)}</b></a></div>
-        <div class="note">${escapeHtml(it.source)} • ${escapeHtml(ago(it.date))}</div>
-      </div>
-      <div class="note" style="margin-top:6px">${escapeHtml(it.summary.slice(0,220))}${it.summary.length>220?'…':''}</div>
-    </div>`).join("") || `<div class="card">No stories matched your filters.</div>`;
+  $("#results").innerHTML = (
+    filtered.map(it=>`
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><a href="${it.link}" target="_blank" rel="noopener"><b>${escapeHtml(it.title)}</b></a></div>
+          <div class="note">${escapeHtml(it.source)} • ${escapeHtml(ago(it.date))}</div>
+        </div>
+        <div class="note" style="margin-top:6px">${escapeHtml((it.summary||"").slice(0,220))}${(it.summary||"").length>220?'…':''}</div>
+      </div>`).join("") || `<div class="card">No stories matched your filters.</div>`
+  ) + (errs.length? `<div class="note" style="margin-top:10px">Some sources failed: ${escapeHtml(errs.join("; "))}</div>` : "");
 
   $("#status").classList.add("hide");
 }
 
-/* ----------------- Wire events ----------------- */
-$("#refresh").onclick = ()=>{ ui.age=$("#age").value; ui.dedupe=$("#dedupe").checked; save(SK.ui,ui); refresh(); };
-$("#manageBtn").onclick = ()=>{ $("#managePanel").classList.toggle("hide"); renderManage(); };
-$("#addTopic").onclick = addTopic;
-$("#addSite").onclick = ()=>{
+/* ---------- Events ---------- */
+$("#refresh").onclick=()=>{ui.age=$("#age").value; ui.dedupe=$("#dedupe").checked; save(SK.ui,ui); refresh();};
+$("#manageBtn").onclick=()=>{$("#managePanel").classList.toggle("hide"); renderManage();};
+$("#addTopic").onclick=addTopic;
+$("#addSite").onclick=()=>{
   const name=$("#sName").value.trim(), url=$("#sUrl").value.trim();
-  if(!name || !/^https?:\/\//i.test(url)) return alert("Add a valid site name and feed URL (https://…)"); 
+  if(!name || !/^https?:\/\//i.test(url)) return alert("Add a valid site name and feed URL (https://…)");
   sites.push({name,url}); save(SK.sites,sites); $("#sName").value=""; $("#sUrl").value=""; renderManage();
 };
-$("#saveCfg").onclick = ()=>{
-  const blob = new Blob([JSON.stringify({sites,topics,ui},null,2)],{type:"application/json"});
-  const url = URL.createObjectURL(blob); const a=document.createElement("a");
-  a.href=url; a.download="news-filter-config.json"; a.click(); URL.revokeObjectURL(url);
+$("#saveCfg").onclick=()=>{
+  const blob=new Blob([JSON.stringify({sites,topics,ui},null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="current-affairs-config.json"; a.click(); URL.revokeObjectURL(url);
 };
 $("#loadCfg").addEventListener("change",(e)=>{
-  const f=e.target.files?.[0]; if(!f) return;
+  const f=e.target.files?.[0]; if(!f)return;
   const r=new FileReader(); r.onload=()=>{ try{
     const data=JSON.parse(r.result);
-    if (Array.isArray(data.sites)) sites=data.sites;
-    if (Array.isArray(data.topics)) topics=data.topics;
-    if (data.ui) ui=data.ui;
+    if(Array.isArray(data.sites)) sites=data.sites;
+    if(Array.isArray(data.topics)) topics=data.topics;
+    if(data.ui) ui=data.ui;
     save(SK.sites,sites); save(SK.topics,topics); save(SK.ui,ui);
     renderTabs(); renderPills(); renderManage(); refresh();
   }catch(_){ alert("Invalid JSON"); } }; r.readAsText(f);
 });
 
-/* ----------------- Kickoff ----------------- */
-renderTabs(); if (!ui.activeTopicId && topics[0]) { ui.activeTopicId=topics[0].id; save(SK.ui,ui); }
-renderPills(); refresh();
+/* ---------- Boot ---------- */
+renderTabs(); if(!ui.activeTopicId&&topics[0]){ui.activeTopicId=topics[0].id; save(SK.ui,ui);}
+renderPills(); renderManage(); refresh();
 </script>
 </body>
 </html>
