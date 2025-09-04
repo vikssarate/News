@@ -26,7 +26,10 @@ small{color:var(--muted)}
 .tabbtn{border:1px solid var(--line);background:#12162a;padding:8px 12px;border-radius:9px}
 .tabbtn.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
 .pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
-.pill{border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:12px;background:#101429}
+.pill{border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;background:#101429}
+.pill.word{cursor:pointer;user-select:none}
+.pill.word.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:#151c3a}
+.pill.action{opacity:.8}
 .grid{display:grid;gap:10px}
 @media(min-width:800px){ .grid{grid-template-columns:1.2fr 2fr} }
 .spinner{width:16px;height:16px;border:2px solid #ffffff33;border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
@@ -96,7 +99,7 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 </div>
 
 <footer class="row" style="justify-content:space-between">
-  <small>Tip: click a title to read on the original site. All filters & config are saved to your browser.</small>
+  <small>Tip: tap headwords to filter. Tap “All” to reset. Click a title to read on the original site.</small>
   <small><a href="https://news.google.com/rss" target="_blank" rel="noopener">Uses site RSS/Atom feeds (no API keys)</a></small>
 </footer>
 
@@ -120,7 +123,7 @@ let sites = load(SK.sites) || [
 ];
 
 let topics = load(SK.topics) || [
-  {id:uid(), name:"Appointments", words:"appointed, takes charge, assumes office, named as, elected as, reappointed, CEO, chairman, governor, chief secretary, CMD, MD, director general, DG, CJI, chief justice, army chief, navy chief, air chief, vice chancellor", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Appointments", words:"appointed, appointment, takes charge, assumes office, named as, elected as, reappointed, CEO, chairman, governor, chief secretary, CMD, MD, director general, DG, CJI, chief justice, army chief, navy chief, air chief, vice chancellor", siteIds:sites.map((_,i)=>i)},
   {id:uid(), name:"Obituaries", words:"passes away, dies, dead, obituary, veteran, noted, eminent, padma awardee, former, ex-, legend", siteIds:sites.map((_,i)=>i)},
   {id:uid(), name:"ISRO / Space", words:"ISRO, PSLV, GSLV, LVM3, SSLV, Chandrayaan, Aditya-L1, XpoSat, satellite, payload, launch, mission, spaceport, Satish Dhawan, INSPACe", siteIds:sites.map((_,i)=>i)},
   {id:uid(), name:"Defence & Security", words:"DRDO, missile, Agni, Pralay, BrahMos, induction, procurement, trial, exercise, Navy, Army, IAF, Coast Guard, border, LAC", siteIds:sites.map((_,i)=>i)},
@@ -132,7 +135,12 @@ let topics = load(SK.topics) || [
   {id:uid(), name:"Govt Schemes / Policy", words:"scheme, yojana, portal, guidelines, cabinet approves, bill passed, ordinance, notification, gazette, draft policy", siteIds:sites.map((_,i)=>i)}
 ];
 
-let ui = load(SK.ui) || {activeTopicId: topics[0]?.id || null, age:"1d", dedupe:true};
+let ui = load(SK.ui) || {
+  activeTopicId: topics[0]?.id || null,
+  age:"1d",
+  dedupe:true,
+  sel:{}          // per-topic selected headwords
+};
 
 function load(k){ try{return JSON.parse(localStorage.getItem(k)||"null");}catch(_){return null} }
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
@@ -141,11 +149,7 @@ function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Mat
 /* ---------- DOM helpers ---------- */
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){
-  return String(s||"").replace(/[&<>"']/g, m => ({
-    "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"
-  }[m]));
-}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v)return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -161,9 +165,45 @@ function renderTabs(){
 function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]||null;}
 function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
 function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
+
 function renderPills(){
-  $("#pillLine").innerHTML = wordsForActive().map(w=>`<span class="pill">${escapeHtml(w)}</span>`).join("") +
-    (activeSites().length? " " + activeSites().map(i=>`<span class="pill source-chip">${escapeHtml(sites[i].name)}</span>`).join(" ") : "");
+  const holder = $("#pillLine");
+  holder.innerHTML = "";
+
+  const t = activeTopic(); if(!t) return;
+  const allWords = wordsForActive();
+  const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
+
+  // "All" reset pill (only shown when some are selected)
+  if (selected.length){
+    const allPill = el("span",{class:"pill word action","role":"button"},"All");
+    allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
+    holder.appendChild(allPill);
+  }
+
+  // Word pills (tap to toggle)
+  allWords.forEach(w=>{
+    const sp = el("span",{class:"pill word"+(selected.includes(w)?" active":""),"role":"button","data-word":w},escapeHtml(w));
+    sp.onclick = ()=>{
+      const set = new Set(ui.sel[t.id]||[]);
+      if (set.has(w)) set.delete(w); else set.add(w);
+      ui.sel[t.id] = Array.from(set);
+      if (ui.sel[t.id].length===0) delete ui.sel[t.id]; // back to "All"
+      save(SK.ui,ui);
+      renderPills();
+      refresh();
+    };
+    holder.appendChild(sp);
+  });
+
+  // Site “chips” (non-interactive summary)
+  const siteIdx = activeSites();
+  if (siteIdx.length){
+    holder.appendChild(el("span",{class:"pill action"},"•"));
+    siteIdx.forEach(i=>{
+      holder.appendChild(el("span",{class:"pill source-chip"},escapeHtml(sites[i].name)));
+    });
+  }
 }
 
 /* ---------- Manage ---------- */
@@ -185,6 +225,7 @@ function renderManage(){
     wrap.querySelector(`[data-del="${t.id}"]`).onclick=()=>{
       if(!confirm(`Delete topic "${t.name}"?`))return;
       topics=topics.filter(x=>x.id!==t.id);
+      delete ui.sel[t.id];
       if(ui.activeTopicId===t.id)ui.activeTopicId=topics[0]?.id||null;
       save(SK.topics,topics);save(SK.ui,ui);renderTabs();renderPills();renderManage();refresh();
     };
@@ -237,67 +278,58 @@ function addTopic(){
   renderTabs(); renderPills(); renderManage();
 }
 
-/* ---------- Fetch & parse (parallel + timeouts + fallbacks) ---------- */
-function fetchTextWithTimeout(url, ms=9000){
-  const ctrl=new AbortController(); const id=setTimeout(()=>ctrl.abort(),ms);
-  return fetch(url,{signal:ctrl.signal}).then(r=>{ if(!r.ok)throw new Error(r.status+" "+r.statusText); return r.text(); }).finally(()=>clearTimeout(id));
+/* ---------- Fetch & parse (robust fallbacks that work on iPad Safari) ---------- */
+function fetchTextWithTimeout(url, ms = 9000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal })
+    .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
+    .finally(() => clearTimeout(id));
 }
-function firstFulfilled(arr){
-  return new Promise((res,rej)=>{
-    let failed=0, lastErr;
-    arr.forEach(p=>Promise.resolve(p).then(res, e=>{ lastErr=e; if(++failed===arr.length) rej(lastErr); }));
+// Resolve on first success, reject only if all fail
+function firstFulfilled(promises) {
+  return new Promise((resolve, reject) => {
+    let pending = promises.length, lastErr;
+    promises.forEach(p => Promise.resolve(p).then(resolve, e => {
+      lastErr = e; if (--pending === 0) reject(lastErr);
+    }));
   });
 }
-function fetchFeed(url){
-  const tries=[
-    fetchTextWithTimeout(url,9000),
-    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,9000),
-    // try both r.jina forms (Safari can be picky)
-    fetchTextWithTimeout(`https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`,9000),
-    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`,9000)
+function fetchFeed(url) {
+  const tries = [
+    fetchTextWithTimeout(url, 9000),
+    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, 9000),
+    fetchTextWithTimeout(`https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`, 9000),
+    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`, 9000),
   ];
   return firstFulfilled(tries);
 }
-
-// --- XML parsing with safe handling of content:encoded ---
-function parseItems(xmlText, sourceName){
-  let doc; try{doc=new DOMParser().parseFromString(xmlText,"text/xml");}catch(_){return[];}
-  const out=[], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
-  const T=(el,sel)=> (el.querySelector(sel)?.textContent||"").trim();
+// XML parsing with safe handling of content:encoded
+function parseItems(xmlText, siteName) {
+  let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
+  const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
+  const txt = (el, sel) => (el.querySelector(sel)?.textContent || "").trim();
   const contentEncoded = el => {
     const n = el.getElementsByTagName("content:encoded");
-    return n && n[0] ? (n[0].textContent||"").trim() : "";
+    return n && n[0] ? (n[0].textContent || "").trim() : "";
   };
-  const strip = s => (s||"").replace(/<[^>]*>/g,"").trim();
-
+  const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
   items.forEach(it=>{
-    const link=T(it,"link")||it.querySelector("link")?.getAttribute("href")||"";
-    const pub=new Date(T(it,"pubDate")||T(it,"date")||Date.now());
-    out.push({
-      title:T(it,"title"),
-      link,
-      date:pub,
-      source:sourceName,
-      summary:strip(T(it,"description")||contentEncoded(it))
-    });
+    const link = txt(it,"link") || it.querySelector("link")?.getAttribute("href") || "";
+    const pub  = new Date(txt(it,"pubDate") || txt(it,"date") || Date.now());
+    out.push({title:txt(it,"title"), link, date:pub, source:siteName, summary:strip(txt(it,"description") || contentEncoded(it))});
   });
   entries.forEach(en=>{
-    const link=en.querySelector("link")?.getAttribute("href")||T(en,"link");
-    const pub=new Date(T(en,"updated")||T(en,"published")||Date.now());
-    out.push({
-      title:T(en,"title"),
-      link,
-      date:pub,
-      source:sourceName,
-      summary:strip(T(en,"summary")||T(en,"content"))
-    });
+    const link = en.querySelector("link")?.getAttribute("href") || txt(en,"link");
+    const pub  = new Date(txt(en,"updated") || txt(en,"published") || Date.now());
+    out.push({title:txt(en,"title"), link, date:pub, source:siteName, summary:strip(txt(en,"summary") || txt(en,"content"))});
   });
   return out.filter(x=>x.title&&x.link);
 }
 
 /* ---------- Filter & render ---------- */
-function buildMatcher(words){
-  const toks=words.split(",").map(s=>s.trim()).filter(Boolean);
+function buildMatcher(wordsCSV){
+  const toks=wordsCSV.split(",").map(s=>s.trim()).filter(Boolean);
   if(!toks.length) return ()=>true;
   const re=new RegExp(toks.map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join("|"),"i");
   return (title,summary)=> re.test(title||"") || re.test(summary||"");
@@ -311,13 +343,15 @@ async function refresh(){
 
   const siteIdx=activeSites();
   const since=parseAgeVal($("#age").value);
-  const match=buildMatcher(t.words||"");
+  const selected = (ui.sel && ui.sel[t.id]) ? ui.sel[t.id] : [];
+  const wordCSV = (selected.length ? selected.join(",") : (t.words||""));
+  const match=buildMatcher(wordCSV);
   const wantDedupe=$("#dedupe").checked;
 
   const tasks=siteIdx.map(async i=>{
     const s=sites[i];
     try{ const xml=await fetchFeed(s.url); return {ok:true,items:parseItems(xml,s.name)};}
-    catch(e){ return {ok:false,err:`${s.name}: ${String(e)}`} }
+    catch(e){ return {ok:false,err:`${s.name}: ${String(e.name||"Error")}: ${String(e.message||e)}`} }
   });
 
   const results=await Promise.allSettled(tasks);
@@ -371,6 +405,7 @@ $("#loadCfg").addEventListener("change",(e)=>{
     if(Array.isArray(data.sites)) sites=data.sites;
     if(Array.isArray(data.topics)) topics=data.topics;
     if(data.ui) ui=data.ui;
+    ui.sel = ui.sel || {};
     save(SK.sites,sites); save(SK.topics,topics); save(SK.ui,ui);
     renderTabs(); renderPills(); renderManage(); refresh();
   }catch(_){ alert("Invalid JSON"); } }; r.readAsText(f);
