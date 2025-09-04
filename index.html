@@ -169,7 +169,6 @@ function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",")
 function renderPills(){
   const holder = $("#pillLine");
   holder.innerHTML = "";
-
   const t = activeTopic(); if(!t) return;
   const allWords = wordsForActive();
   const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
@@ -275,30 +274,30 @@ function addTopic(){
   renderTabs(); renderPills(); renderManage();
 }
 
-/* ---------- Fetch & parse (robust fallbacks that work on iPad Safari) ---------- */
-function fetchTextWithTimeout(url, ms = 9000) {
+/* ---------- Fetch & parse (robust for Safari) ---------- */
+function fetchTextWithTimeout(url, ms = 15000) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   return fetch(url, { signal: ctrl.signal })
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
-function firstFulfilled(promises) {
-  return new Promise((resolve, reject) => {
-    let pending = promises.length, lastErr;
-    promises.forEach(p => Promise.resolve(p).then(resolve, e => {
-      lastErr = e; if (--pending === 0) reject(lastErr);
-    }));
-  });
-}
-function fetchFeed(url) {
+// Try proxies SEQUENTIALLY (no fan-out)
+async function fetchFeed(url) {
   const tries = [
-    fetchTextWithTimeout(url, 9000),
-    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, 9000),
-    fetchTextWithTimeout(`https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`, 9000),
-    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`, 9000),
+    url,
+    `https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`,
+    `https://r.jina.ai/http/${url}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
   ];
-  return firstFulfilled(tries);
+  let lastErr;
+  for (const u of tries) {
+    try {
+      const tx = await fetchTextWithTimeout(u, 15000);
+      if (tx && tx.length > 80) return tx;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error("All fallbacks failed");
 }
 function parseItems(xmlText, siteName) {
   let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
@@ -323,29 +322,20 @@ function parseItems(xmlText, siteName) {
 }
 
 /* ---------- Filter & render ---------- */
-// WHOLE-WORD / PHRASE MATCHER (prevents 'dies' matching 'disappointed')
+// WHOLE-WORD / PHRASE matcher
 function buildMatcher(wordsCSV){
-  // Canonicalize to lowercase, non-alphanumerics -> space, collapse, then pad with spaces
   const canon = s => (" " + String(s||"")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim() + " ");
-
-  // Prepare tokens (phrases allowed)
-  const toks = wordsCSV.split(",")
-    .map(s=>s.trim())
-    .filter(Boolean)
-    .map(t => " " + canon(t).trim() + " ");
-
+  const toks = wordsCSV.split(",").map(s=>s.trim()).filter(Boolean).map(t => " " + canon(t).trim() + " ");
   if(!toks.length) return ()=>true;
-
-  return (title,summary)=>{
+  return (title,summary)=> {
     const hay = canon((title||"") + " " + (summary||""));
-    return toks.some(tok => hay.includes(tok));  // whole-word/phrase check
+    return toks.some(tok => hay.includes(tok));
   };
 }
-
 function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();}
 
 async function refresh(){
@@ -360,18 +350,24 @@ async function refresh(){
   const match=buildMatcher(wordCSV);
   const wantDedupe=$("#dedupe").checked;
 
-  const tasks=siteIdx.map(async i=>{
-    const s=sites[i];
-    try{ const xml=await fetchFeed(s.url); return {ok:true,items:parseItems(xml,s.name)};}
-    catch(e){ return {ok:false,err:`${s.name}: ${String(e.name||"Error")}: ${String(e.message||e)}`} }
-  });
-
-  const results=await Promise.allSettled(tasks);
   const all=[], errs=[];
-  for(const r of results){
-    if(r.status==="fulfilled"){ if(r.value.ok) all.push(...r.value.items); else errs.push(r.value.err); }
-    else errs.push(String(r.reason));
-  }
+  const queue=[...siteIdx];
+  const WORKERS = Math.min(3, queue.length);   // limit concurrency
+
+  await Promise.all(new Array(WORKERS).fill(0).map(async ()=>{
+    while (queue.length){
+      const i = queue.shift();
+      const s = sites[i];
+      try{
+        const xml = await fetchFeed(s.url);
+        const items = parseItems(xml, s.name);
+        items.forEach(it => all.push(it));
+      }catch(e){
+        const msg = (e && e.name === "AbortError") ? "Timed out" : (e?.message || String(e));
+        errs.push(`${s.name}: ${msg}`);
+      }
+    }
+  }));
 
   let filtered = all
     .filter(it=>!since || it.date>=since)
