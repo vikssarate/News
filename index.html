@@ -104,6 +104,11 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 </footer>
 
 <script>
+/* ---------------- Config ---------------- */
+// If you deploy a Cloudflare Worker as an edge proxy, put its URL here (no trailing slash).
+// Example: const FAST_PROXY = "https://news-proxy-xxxxx.workers.dev";
+const FAST_PROXY = ""; // leave empty to skip
+
 /* ---------- Storage & defaults ---------- */
 const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
 
@@ -114,6 +119,10 @@ let sites = load(SK.sites) || [
   {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
   {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
+  {name:"Reuters — India Business",  url:"https://feeds.reuters.com/reuters/INbusinessNews"},
+  {name:"BusinessLine — Economy",    url:"https://www.thehindubusinessline.com/economy/feeder/default.rss"},
+  {name:"Business Standard — Economy & Policy", url:"https://www.business-standard.com/rss/economy-policy-102.rss"},
+  {name:"Moneycontrol — Economy",    url:"https://www.moneycontrol.com/rss/economy.xml"},
   {name:"The Hindu — National",      url:"https://www.thehindu.com/news/national/feeder/default.rss"},
   {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
   {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
@@ -166,7 +175,7 @@ function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]
 function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
 function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
 
-/* ---------- Pills (with persistent selection & "All" always visible) ---------- */
+/* ---------- Pills (persistent selection, "All" always visible) ---------- */
 function renderPills(){
   const holder = $("#pillLine");
   holder.innerHTML = "";
@@ -176,11 +185,7 @@ function renderPills(){
   const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
 
   // Always show ALL pill; make it active when nothing selected
-  const allPill = el(
-    "span",
-    { class:"pill word" + (selected.length===0 ? " active" : ""), role:"button" },
-    "All"
-  );
+  const allPill = el("span",{class:"pill word"+(selected.length===0?" active":""),role:"button"},"All");
   allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
   holder.appendChild(allPill);
 
@@ -281,31 +286,35 @@ function addTopic(){
   renderTabs(); renderPills(); renderManage();
 }
 
-/* ---------- Fetch & parse (robust for Safari) ---------- */
-function fetchTextWithTimeout(url, ms = 15000) {
+/* ---------- Fetch & parse (fast + robust) ---------- */
+function fetchTextWithTimeout(url, ms = 10000) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   return fetch(url, { signal: ctrl.signal })
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
-// Try proxies SEQUENTIALLY (no fan-out)
+
+// Prefer edge proxy (if set) → direct → public mirrors
 async function fetchFeed(url) {
-  const tries = [
+  const tries = []
+  if (FAST_PROXY) tries.push(`${FAST_PROXY}/?url=${encodeURIComponent(url)}`);
+  tries.push(
     url,
     `https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`,
     `https://r.jina.ai/http/${url}`,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-  ];
+  );
   let lastErr;
   for (const u of tries) {
     try {
-      const tx = await fetchTextWithTimeout(u, 15000);
+      const tx = await fetchTextWithTimeout(u, 10000);
       if (tx && tx.length > 80) return tx;
     } catch (e) { lastErr = e; }
   }
   throw lastErr || new Error("All fallbacks failed");
 }
+
 function parseItems(xmlText, siteName) {
   let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
   const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
@@ -329,7 +338,7 @@ function parseItems(xmlText, siteName) {
 }
 
 /* ---------- Filter & render ---------- */
-// WHOLE-WORD / PHRASE matcher
+// Whole-word / phrase matcher
 function buildMatcher(wordsCSV){
   const canon = s => (" " + String(s||"")
     .toLowerCase()
@@ -345,6 +354,7 @@ function buildMatcher(wordsCSV){
 }
 function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();}
 
+/* Progressive, fast refresh */
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
@@ -359,43 +369,51 @@ async function refresh(){
 
   const all=[], errs=[];
   const queue=[...siteIdx];
-  const WORKERS = Math.min(3, queue.length);   // limit concurrency
+  let done = 0;
 
-  await Promise.all(new Array(WORKERS).fill(0).map(async ()=>{
-    while (queue.length){
-      const i = queue.shift();
-      const s = sites[i];
-      try{
-        const xml = await fetchFeed(s.url);
-        const items = parseItems(xml, s.name);
-        items.forEach(it => all.push(it));
-      }catch(e){
-        const msg = (e && e.name === "AbortError") ? "Timed out" : (e?.message || String(e));
-        errs.push(`${s.name}: ${msg}`);
-      }
+  function renderNow(){
+    let filtered = all
+      .filter(it=>!since || it.date>=since)
+      .filter(it=>match(it.title,it.summary))
+      .sort((a,b)=>b.date-a.date);
+
+    if(wantDedupe){
+      const seen=new Set();
+      filtered=filtered.filter(it=>{const k=normalizeTitle(it.title); if(seen.has(k))return false; seen.add(k); return true;});
     }
-  }));
 
-  let filtered = all
-    .filter(it=>!since || it.date>=since)
-    .filter(it=>match(it.title,it.summary))
-    .sort((a,b)=>b.date-a.date);
-
-  if(wantDedupe){
-    const seen=new Set();
-    filtered=filtered.filter(it=>{const k=normalizeTitle(it.title); if(seen.has(k))return false; seen.add(k); return true;});
-  }
-
-  $("#results").innerHTML = (
-    filtered.map(it=>`
+    const cards = filtered.map(it=>`
       <div class="card">
         <div class="row" style="justify-content:space-between">
           <div><a href="${it.link}" target="_blank" rel="noopener"><b>${escapeHtml(it.title)}</b></a></div>
           <div class="note">${escapeHtml(it.source)} • ${escapeHtml(ago(it.date))}</div>
         </div>
         <div class="note" style="margin-top:6px">${escapeHtml((it.summary||"").slice(0,220))}${(it.summary||"").length>220?'…':''}</div>
-      </div>`).join("") || `<div class="card">No stories matched your filters.</div>`
-  ) + (errs.length? `<div class="note" style="margin-top:10px">Some sources failed: ${escapeHtml(errs.join("; "))}</div>` : "");
+      </div>`).join("");
+
+    const progress = `<div class="note" style="margin-top:10px">
+      Fetched ${done}/${siteIdx.length} sources${errs.length?` — some failed: ${escapeHtml(errs.join("; "))}`:""}.
+    </div>`;
+
+    $("#results").innerHTML = (cards || `<div class="card">Fetching… (sources ${done}/${siteIdx.length})</div>`) + progress;
+  }
+
+  const WORKERS = Math.min(6, queue.length);   // snappier feel
+  await Promise.all(new Array(WORKERS).fill(0).map(async ()=>{
+    while (queue.length){
+      const i = queue.shift();
+      const s = sites[i];
+      try{
+        const xml = await fetchFeed(s.url);
+        parseItems(xml, s.name).forEach(it => all.push(it));
+      }catch(e){
+        const msg = (e && e.name === "AbortError") ? "Timed out" : (e?.message || String(e));
+        errs.push(`${s.name}: ${msg}`);
+      }finally{
+        done++; renderNow();
+      }
+    }
+  }));
 
   $("#status").classList.add("hide");
 }
