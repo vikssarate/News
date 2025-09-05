@@ -38,7 +38,7 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 .source-chip{border:1px solid var(--line);padding:4px 8px;border-radius:999px;font-size:12px}
 .k{font-weight:600}
 .note{color:var(--muted);font-size:12px}
-/* optional: style for the + tab button */
+/* + tab button */
 #addTabBtn{font-weight:700;opacity:.9}
 #addTabBtn:hover{opacity:1}
 </style>
@@ -108,7 +108,7 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 
 <script>
 /* ---------------- Config ---------------- */
-// Use your Cloudflare Worker as the first-hop proxy (no trailing slash)
+/* Use your Cloudflare Worker as the first-hop proxy (no trailing slash) */
 const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
 
 /* ---------- Storage & defaults ---------- */
@@ -129,6 +129,8 @@ let sites = load(SK.sites) || [
   {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
   {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
   {name:"The Print — All",           url:"https://theprint.in/feed/"},
+  /* ✅ NEW: PMO feed */
+  {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
 ];
@@ -153,14 +155,13 @@ let ui = load(SK.ui) || {
   sel:{}          // per-topic selected headwords
 };
 
+/* ---------- Utils ---------- */
 function load(k){ try{return JSON.parse(localStorage.getItem(k)||"null");}catch(_){return null} }
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
-
-/* ---------- DOM helpers ---------- */
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","—":"—",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -172,7 +173,6 @@ function renderTabs(){
     b.onclick=()=>{ui.activeTopicId=t.id;save(SK.ui,ui);renderTabs();renderPills();refresh();};
     bar.appendChild(b);
   });
-  // + Add tab button
   const plus=el("button",{class:"tabbtn",id:"addTabBtn",title:"Add a new tab"},"＋");
   plus.onclick=quickAddTopic;
   bar.appendChild(plus);
@@ -181,11 +181,11 @@ function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]
 function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
 function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
 
-/* ---------- Quick Add Topic (for ＋ button) ---------- */
+/* Quick-add (＋) */
 function quickAddTopic(){
   const name=prompt("New tab name (e.g., ‘Health’):"); if(!name) return;
   const words=prompt("Headwords / keywords (comma-separated):\n(e.g., WHO, vaccine, health ministry, outbreak)")||"";
-  const siteIds=sites.map((_,i)=>i);  // include all sites by default
+  const siteIds=sites.map((_,i)=>i);
   const t={id:uid(),name:name.trim(),words:words.trim(),siteIds};
   topics.push(t);
   ui.activeTopicId=t.id;
@@ -193,7 +193,7 @@ function quickAddTopic(){
   renderTabs(); renderPills(); refresh();
 }
 
-/* ---------- Pills (persistent selection, "All" always visible) ---------- */
+/* Pills */
 function renderPills(){
   const holder = $("#pillLine");
   holder.innerHTML = "";
@@ -229,7 +229,7 @@ function renderPills(){
   }
 }
 
-/* ---------- Manage ---------- */
+/* Manage */
 function renderManage(){
   const tBox=$("#topicsList"); tBox.innerHTML="";
   topics.forEach(t=>{
@@ -309,7 +309,6 @@ function fetchTextWithTimeout(url, ms = 10000) {
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
-// Resolve on first success, reject only if all fail
 function firstFulfilled(promises) {
   return new Promise((resolve, reject) => {
     let pending = promises.length, lastErr;
@@ -318,27 +317,21 @@ function firstFulfilled(promises) {
     }));
   });
 }
-
-// Prefer edge proxy (if set) → direct → public mirrors
 async function fetchFeed(url) {
   const ttl = 180; // seconds
   const tries = [];
-
   if (FAST_PROXY) {
     const proxied = `${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`;
     tries.push(fetchTextWithTimeout(proxied, 10000));
   }
-
   tries.push(
     fetchTextWithTimeout(url, 10000),
     fetchTextWithTimeout(`https://r.jina.ai/http/${url}`, 10000),
     fetchTextWithTimeout(`https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`, 10000),
     fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, 10000)
   );
-
   return firstFulfilled(tries);
 }
-
 function parseItems(xmlText, siteName) {
   let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
   const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
@@ -381,7 +374,7 @@ function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,""
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  // IMPORTANT: keep "Any time" when value is "" (use ?? not ||)
+  // keep “Any time” (empty string) when chosen
   $("#age").value = (ui.age ?? "1d");
   $("#dedupe").checked=!!ui.dedupe;
 
