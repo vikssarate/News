@@ -130,6 +130,7 @@ let sites = load(SK.sites) || [
   {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
   {name:"The Print — All",           url:"https://theprint.in/feed/"},
   {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
+  {name:"AIR News — National",       url:"https://www.newsonair.gov.in/category/national/feed/"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
 ];
@@ -154,7 +155,7 @@ function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;"," >":">","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -347,6 +348,60 @@ function fetchTextWithTimeout(url, ms = 12000) {
 }
 function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
+/* Generic list-page HTML → JSON fallback (for sites like AIR News) */
+async function scrapeListToJSON(baseUrl, domainRe){
+  const candidates = [
+    "https://r.jina.ai/http/" + baseUrl.replace(/^https?:\/\//,'https://'),
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(baseUrl)
+  ];
+  let html = "";
+  for (const u of candidates) {
+    try {
+      const t = await fetchTextWithTimeout(u, 12000);
+      if (t && t.length > 200) { html = t; break; }
+    } catch {}
+  }
+  if (!html) throw new Error("list HTML not reachable: " + baseUrl);
+
+  const makeAbs = (href) => { try { return new URL(href, baseUrl).href; } catch { return ""; } };
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const zone = doc.querySelector("main, #main, .main, .content, .container, body") || doc.body;
+
+  const anchors = [...zone.querySelectorAll("a")].filter(a=>{
+    const txt = (a.textContent||"").trim();
+    const href = a.getAttribute("href") || "";
+    if (!txt || txt.length < 10) return false;
+    if (txt.split(/\s+/).length < 2) return false;
+    if (!href || href.startsWith("#")) return false;
+    const abs = makeAbs(href);
+    if (domainRe && !domainRe.test(abs)) return false;
+    const cls = ((a.className||"")+" "+(a.parentElement?.className||"")).toLowerCase();
+    if (/(menu|nav|breadcrumb|footer|share|social|button|more)/.test(cls)) return false;
+    return true;
+  });
+
+  const seen = new Set();
+  const items = [];
+  anchors.forEach((a, i) => {
+    const href = makeAbs(a.getAttribute("href") || "");
+    if (!href || seen.has(href)) return;
+    seen.add(href);
+
+    const wrap = a.closest("article, li, .post, .entry, .news") || a.parentElement;
+    const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
+    const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtRaw);
+    const when = m ? new Date(m[1]) : new Date(Date.now() - i*3600e3);
+
+    const p = wrap && wrap.querySelector("p");
+    const summary = p ? p.textContent.trim() : "";
+
+    items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
+  });
+
+  return JSON.stringify({ items });
+}
+
 /* PMO: HTML → JSON fallback */
 async function scrapePMOAsJSON() {
   const base = "https://www.pmindia.gov.in/en/news-updates/";
@@ -434,30 +489,43 @@ async function fetchPMOWordPressJSON(){
   throw new Error("wp-json fallback failed");
 }
 
-/* Try: direct/proxy RSS → JSON (object/array) → feed2json → PMO fallbacks */
-async function fetchFeed(url) {
+/* Try: direct/proxy RSS → raw JSON (object/array) → feed2json → site-specific fallbacks */
+async function fetchFeed(inputUrl) {
+  let url = String(inputUrl||"");
+
+  /* Google News “topics/…” → “/rss/topics/…” */
+  if (/^https?:\/\/news\.google\.com\/topics\//i.test(url) && !/\/rss\//i.test(url)){
+    url = url.replace(/\/topics\//i, '/rss/topics/');
+  }
+
+  /* If user pasted AIR category URL, try its /feed/ first */
+  const extraCandidates = [];
+  if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)){
+    extraCandidates.push(url.replace(/\/?$/, '/feed/'));
+  }
+
   const ttl = 180;
-  const noProto = String(url).replace(/^https?:\/\//,'');
-  const attempts = [];
-  if (FAST_PROXY) attempts.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
-  attempts.push(
+  const noProto = url.replace(/^https?:\/\//,'');
+  const attempts = [
+    ...extraCandidates,
+    ...(FAST_PROXY ? [`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`] : []),
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://r.jina.ai/http/${url}`,
     `https://r.jina.ai/http/${noProto}`
-  );
+  ];
 
   let lastErr;
   for (const u of attempts) {
     try {
       const txt = await fetchTextWithTimeout(u, 12000);
       const t = (txt||"").trim();
-      // Accept XML or raw JSON (object or array)
+      // Accept XML feeds or raw JSON (object or array)
       if (t && (looksLikeFeed(t) || t.startsWith("{") || t.startsWith("["))) return t;
     } catch(e){ lastErr = e; }
   }
 
-  // feed2json — only if it returns items
+  /* feed2json — only if it returns items */
   try{
     const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
     const js = await fetchTextWithTimeout(fj, 12000);
@@ -468,10 +536,15 @@ async function fetchFeed(url) {
     }
   }catch(e){ lastErr = e; }
 
-  // PMO specific fallbacks
+  /* PMO specific fallbacks */
   if (/pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(url)) {
     try { return await fetchPMOWordPressJSON(); } catch(e){ lastErr = e; }
     try { return await scrapePMOAsJSON(); } catch(e){ lastErr = e; }
+  }
+
+  /* NewsOnAir category page: generic HTML scrape as last resort */
+  if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)) {
+    try { return await scrapeListToJSON(url, /newsonair\.gov\.in/i); } catch(e){ lastErr = e; }
   }
 
   throw lastErr || new Error("All fallbacks failed");
@@ -481,7 +554,7 @@ function parseItems(payload, siteName) {
   if (!payload) return [];
   const trimmed = payload.trim();
 
-  // JSON OBJECT: { items: [...] } (feed2json, our PMO scrapers)
+  /* JSON OBJECT: { items: [...] } (feed2json or custom scrapers) */
   if (trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
@@ -497,7 +570,7 @@ function parseItems(payload, siteName) {
     } catch { return []; }
   }
 
-  // JSON ARRAY: [ {...}, {...} ] (WordPress /wp-json/wp/v2/posts)
+  /* JSON ARRAY: [ {...}, ... ] (WordPress /wp-json/wp/v2/posts etc.) */
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
@@ -511,7 +584,7 @@ function parseItems(payload, siteName) {
     } catch { return []; }
   }
 
-  // XML path
+  /* XML path (RSS/Atom) */
   let doc; try { doc = new DOMParser().parseFromString(payload, "text/xml"); } catch { return []; }
   const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
   const txt = (el, sel) => (el.querySelector(sel)?.textContent || "").trim();
