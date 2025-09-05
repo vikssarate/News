@@ -326,12 +326,54 @@ function fetchTextWithTimeout(url, ms = 10000) {
 }
 function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
-/* Try several endpoints; accept first *real* feed; final fallback = feed2json */
+/* Site-specific HTML → JSON scraper for PMO (last resort) */
+async function scrapePMOAsJSON() {
+  const targets = [
+    "https://r.jina.ai/http/https://www.pmindia.gov.in/en/news-updates/",
+    "https://r.jina.ai/http/http://www.pmindia.gov.in/en/news-updates/",
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.pmindia.gov.in/en/news-updates/")
+  ];
+  let html = "";
+  for (const u of targets) {
+    try { html = await fetchTextWithTimeout(u, 10000); if (html) break; } catch {}
+  }
+  if (!html) throw new Error("PMO list HTML not reachable");
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const cards = [...doc.querySelectorAll("article, .post, .news-list li, .list-group-item")];
+  const fallback = [...doc.querySelectorAll("h2 a, h3 a, .entry-title a")];
+  const nodes = cards.length ? cards : fallback.map(a => ({querySelector:()=>a, textContent:a.textContent}));
+
+  const items = [];
+  const fmtDate = s => {
+    // Examples seen: "04 Sep, 2025" or "4 Sep, 2025"
+    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(s||"");
+    return m ? new Date(m[1]) : new Date();
+  };
+  nodes.forEach(n=>{
+    let a = n.querySelector ? n.querySelector("a") : null;
+    if (!a && n.href) a = n;
+    const href = a ? a.getAttribute("href") : "";
+    const title = (a ? a.textContent : (n.textContent||"")).trim();
+    if (!href || !title) return;
+    const dateEl = (n.querySelector && (n.querySelector(".date,.entry-date,time") || null));
+    const dateText = dateEl ? (dateEl.getAttribute("datetime") || dateEl.textContent) : html;
+    const summaryEl = n.querySelector && n.querySelector("p");
+    const summary = (summaryEl ? summaryEl.textContent : "").trim();
+    items.push({
+      title, url: href, date_published: fmtDate(dateText), summary
+    });
+  });
+
+  return JSON.stringify({ items });
+}
+
+/* Try several endpoints; accept first *real* feed; then JSON; finally PMO HTML scrape */
 async function fetchFeed(url) {
   const ttl = 180;
-  const tries = [];
-  if (FAST_PROXY) tries.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
-  tries.push(
+  const attempts = [];
+  if (FAST_PROXY) attempts.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
+  attempts.push(
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://r.jina.ai/http/${url}`,
@@ -339,7 +381,7 @@ async function fetchFeed(url) {
   );
 
   let lastErr;
-  for (const u of tries) {
+  for (const u of attempts) {
     try {
       const txt = await fetchTextWithTimeout(u, 10000);
       if (txt && txt.length>80 && looksLikeFeed(txt)) return txt; // RSS/Atom/XML
@@ -349,8 +391,16 @@ async function fetchFeed(url) {
   // JSON fallback via feed2json
   try{
     const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
-    return await fetchTextWithTimeout(fj, 10000); // returns JSON string
+    const js = await fetchTextWithTimeout(fj, 10000);
+    if (js && js.trim().startsWith("{")) return js;
   }catch(e){ lastErr = e; }
+
+  // PMO-only: scrape HTML if feed blocked everywhere
+  if (/pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(url)) {
+    try {
+      return await scrapePMOAsJSON();
+    } catch(e){ lastErr = e; }
+  }
 
   throw lastErr || new Error("All fallbacks failed");
 }
@@ -359,7 +409,7 @@ function parseItems(payload, siteName) {
   if (!payload) return [];
   const trimmed = payload.trim();
 
-  // JSON path (feed2json)
+  // JSON path (feed2json or our scraper)
   if (trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
