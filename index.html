@@ -152,6 +152,11 @@ let sites = load(SK.sites) || [
   // ——— Test firing + missile ———
 { name:"Google News — “test firing” + missile (strict)",
   url:"https://news.google.com/rss/search?q=%22test+firing%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
+  { name:"GNews — PM inaugurate", url:"https://news.google.com/rss/search?q=PM+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
+{ name:"GNews — Prime Minister inaugurate", url:"https://news.google.com/rss/search?q=%22Prime+Minister%22+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
+{ name:"GNews — “PM to inaugurate”", url:"https://news.google.com/rss/search?q=%22PM+to+inaugurate%22&hl=en-IN&gl=IN&ceid=IN:en" },
+// Optional broad one:
+{ name:"GNews — PM/PMO inaugurations (broad)", url:"https://news.google.com/rss/search?q=%28PM+inaugurate+OR+PM+inaugurates+OR+%22PM+to+inaugurate%22+OR+%22Prime+Minister%22+inaugurate+OR+%22Prime+Minister%22+inaugurates%29&hl=en-IN&gl=IN&ceid=IN:en" },
 
 { name:"Google News — test-firing + missile (broader)",
   url:"https://news.google.com/rss/search?q=%28%22test+firing%22+OR+test-firing+OR+%22test+fired%22+OR+%22test-fired%22+OR+%22test+fire%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
