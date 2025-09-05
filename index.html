@@ -109,6 +109,8 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 <script>
 /* ---------------- Config ---------------- */
 const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
+/* Crawl depth for paginated list pages */
+const MAX_PAGES = 10;
 
 /* ---------- Storage & defaults ---------- */
 const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
@@ -155,7 +157,7 @@ function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;"," >":">","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -348,61 +350,91 @@ function fetchTextWithTimeout(url, ms = 12000) {
 }
 function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
-/* Generic list-page HTML → JSON fallback (for sites like AIR News) */
-async function scrapeListToJSON(baseUrl, domainRe){
-  const candidates = [
-    "https://r.jina.ai/http/" + baseUrl.replace(/^https?:\/\//,'https://'),
-    "https://api.allorigins.win/raw?url=" + encodeURIComponent(baseUrl)
-  ];
-  let html = "";
-  for (const u of candidates) {
-    try {
-      const t = await fetchTextWithTimeout(u, 12000);
-      if (t && t.length > 200) { html = t; break; }
-    } catch {}
-  }
-  if (!html) throw new Error("list HTML not reachable: " + baseUrl);
+/* Generic list-page HTML → JSON with pagination (pages 1..MAX_PAGES) */
+async function scrapeListToJSON(baseUrl, domainRe, maxPages = MAX_PAGES){
+  const fetchHTML = async (u) => {
+    const tries = [
+      "https://r.jina.ai/http/" + u.replace(/^https?:\/\//,'https://'),
+      "https://api.allorigins.win/raw?url=" + encodeURIComponent(u)
+    ];
+    for (const t of tries){
+      try { const txt = await fetchTextWithTimeout(t, 12000); if (txt && txt.length>200) return txt; } catch {}
+    }
+    return "";
+  };
+  const makeAbs = (href, base) => { try { return new URL(href, base).href; } catch { return ""; } };
 
-  const makeAbs = (href) => { try { return new URL(href, baseUrl).href; } catch { return ""; } };
-  const doc = new DOMParser().parseFromString(html, "text/html");
-  const zone = doc.querySelector("main, #main, .main, .content, .container, body") || doc.body;
-
-  const anchors = [...zone.querySelectorAll("a")].filter(a=>{
-    const txt = (a.textContent||"").trim();
-    const href = a.getAttribute("href") || "";
-    if (!txt || txt.length < 10) return false;
-    if (txt.split(/\s+/).length < 2) return false;
-    if (!href || href.startsWith("#")) return false;
-    const abs = makeAbs(href);
-    if (domainRe && !domainRe.test(abs)) return false;
-    const cls = ((a.className||"")+" "+(a.parentElement?.className||"")).toLowerCase();
-    if (/(menu|nav|breadcrumb|footer|share|social|button|more)/.test(cls)) return false;
-    return true;
-  });
-
-  const seen = new Set();
+  const pagesToFetch = new Set([baseUrl]);
+  const visited = new Set();
   const items = [];
-  anchors.forEach((a, i) => {
-    const href = makeAbs(a.getAttribute("href") || "");
-    if (!href || seen.has(href)) return;
-    seen.add(href);
+  const seenLinks = new Set();
 
-    const wrap = a.closest("article, li, .post, .entry, .news") || a.parentElement;
-    const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
-    const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
-    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtRaw);
-    const when = m ? new Date(m[1]) : new Date(Date.now() - i*3600e3);
+  // Seed common patterns
+  for (let n=2; n<=Math.min(5,maxPages); n++){
+    [ baseUrl.replace(/\/?$/, '/') + 'page/' + n + '/',
+      baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'page=' + n,
+      baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'paged=' + n
+    ].forEach(u => pagesToFetch.add(u));
+  }
 
-    const p = wrap && wrap.querySelector("p");
-    const summary = p ? p.textContent.trim() : "";
+  while (pagesToFetch.size && visited.size < maxPages){
+    const url = [...pagesToFetch].find(u => !visited.has(u));
+    if (!url) break;
+    visited.add(url);
 
-    items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
-  });
+    const html = await fetchHTML(url);
+    if (!html) continue;
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const zone = doc.querySelector("main, #main, .main, .content, .container, body") || doc.body;
+
+    const anchors = [...zone.querySelectorAll("a")].filter(a=>{
+      const txt = (a.textContent||"").trim();
+      const href = a.getAttribute("href") || "";
+      if (!txt || txt.length < 10) return false;
+      if (txt.split(/\s+/).length < 2) return false;
+      if (!href || href.startsWith("#")) return false;
+      const abs = makeAbs(href, url);
+      if (domainRe && !domainRe.test(abs)) return false;
+      const cls = ((a.className||"")+" "+(a.parentElement?.className||"")).toLowerCase();
+      if (/(menu|nav|breadcrumb|footer|share|social|button|more|tag|category|author)/.test(cls)) return false;
+      return true;
+    });
+
+    anchors.forEach((a, i) => {
+      const href = makeAbs(a.getAttribute("href") || "", url);
+      if (!href || seenLinks.has(href)) return;
+      seenLinks.add(href);
+
+      const wrap = a.closest("article, li, .post, .entry, .news, .card") || a.parentElement;
+      const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
+      const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+      const m = /(\d{1,2}\s+[A-Za-z]{3,9},?\s+\d{4})/.exec(dtRaw);
+      const fallbackOffsetHours = (visited.size-1)*48 + i;
+      const when = m ? new Date(m[1]) : new Date(Date.now() - fallbackOffsetHours*3600e3);
+
+      const p = wrap && (wrap.querySelector("p, .excerpt") || null);
+      const summary = p ? p.textContent.trim() : "";
+
+      if (domainRe && !domainRe.test(href)) return;
+      items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
+    });
+
+    const pagLinks = [
+      ...doc.querySelectorAll('a[rel="next"], .pagination a, nav.pagination a, a.page-numbers, a.next, a.nextpostslink')
+    ].map(a => makeAbs(a.getAttribute("href") || "", url))
+     .filter(h => h && (!domainRe || domainRe.test(h)));
+
+    for (const purl of pagLinks){
+      if (pagesToFetch.size >= maxPages) break;
+      pagesToFetch.add(purl);
+    }
+  }
 
   return JSON.stringify({ items });
 }
 
-/* PMO: HTML → JSON fallback */
+/* PMO: HTML → JSON fallback (single page if needed) */
 async function scrapePMOAsJSON() {
   const base = "https://www.pmindia.gov.in/en/news-updates/";
   const targets = [
@@ -417,7 +449,6 @@ async function scrapePMOAsJSON() {
   if (!html) throw new Error("PMO list HTML not reachable");
 
   const makeAbs = (href) => { try { return new URL(href, base).href; } catch { return ""; } };
-
   const doc = new DOMParser().parseFromString(html, "text/html");
   const zone = doc.querySelector("main, #main, .main, .content, .container") || doc.body;
 
@@ -457,39 +488,43 @@ async function scrapePMOAsJSON() {
   return JSON.stringify({ items });
 }
 
-/* PMO: try WordPress JSON API */
-async function fetchPMOWordPressJSON(){
-  const endpoints = [
-    "https://www.pmindia.gov.in/en/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date",
-    "https://www.pmindia.gov.in/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date"
+/* PMO: WordPress JSON API with pagination (pages 1..MAX_PAGES) */
+async function fetchPMOWordPressJSON(pages = MAX_PAGES){
+  const base = "https://www.pmindia.gov.in/en/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date";
+  const mirrors = [
+    "https://r.jina.ai/http/" + base,
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(base)
   ];
-  const wrappers = (u)=>[
-    "https://r.jina.ai/http/"+u.replace(/^https?:\/\//,'https://'),
-    "https://api.allorigins.win/raw?url="+encodeURIComponent(u)
-  ];
-  for(const ep of endpoints){
-    for(const w of wrappers(ep)){
+  const items = [];
+  for (let page=1; page<=pages; page++){
+    let got=false;
+    for (const m of mirrors){
       try{
-        const t = await fetchTextWithTimeout(w, 12000);
+        const t = await fetchTextWithTimeout(m + "&page=" + page, 12000);
         if (t && t.trim().startsWith("[")) {
           const arr = JSON.parse(t);
           if (Array.isArray(arr) && arr.length){
-            const items = arr.map(x=>({
-              title: (x.title && (x.title.rendered||"")).replace(/<[^>]*>/g,"").trim(),
-              url: x.link,
-              date_published: x.date,
-              summary: (x.excerpt && (x.excerpt.rendered||"")).replace(/<[^>]*>/g,"").trim()
-            })).filter(x=>x.title && x.url);
-            if (items.length) return JSON.stringify({items});
+            arr.forEach(x=>{
+              items.push({
+                title: (x.title?.rendered||"").replace(/<[^>]*>/g,"").trim(),
+                url: x.link,
+                date_published: x.date,
+                summary: (x.excerpt?.rendered||"").replace(/<[^>]*>/g,"").trim()
+              });
+            });
+            got=true;
+            break;
           }
         }
       }catch{}
     }
+    if (!got) break;
   }
+  if (items.length) return JSON.stringify({ items });
   throw new Error("wp-json fallback failed");
 }
 
-/* Try: direct/proxy RSS → raw JSON (object/array) → feed2json → site-specific fallbacks */
+/* Try: direct/proxy RSS → JSON (obj/array) → feed2json → site-specific fallbacks */
 async function fetchFeed(inputUrl) {
   let url = String(inputUrl||"");
 
@@ -498,16 +533,19 @@ async function fetchFeed(inputUrl) {
     url = url.replace(/\/topics\//i, '/rss/topics/');
   }
 
-  /* If user pasted AIR category URL, try its /feed/ first */
-  const extraCandidates = [];
+  /* If AIR category or PMO list page pasted, try their /feed/ first */
+  const extras = [];
   if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)){
-    extraCandidates.push(url.replace(/\/?$/, '/feed/'));
+    extras.push(url.replace(/\/?$/, '/feed/'));
+  }
+  if (/^https?:\/\/www\.pmindia\.gov\.in\/en\/news-updates\/?$/i.test(url)){
+    extras.push(url.replace(/\/?$/, '/feed/'));
   }
 
   const ttl = 180;
   const noProto = url.replace(/^https?:\/\//,'');
   const attempts = [
-    ...extraCandidates,
+    ...extras,
     ...(FAST_PROXY ? [`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`] : []),
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -520,7 +558,6 @@ async function fetchFeed(inputUrl) {
     try {
       const txt = await fetchTextWithTimeout(u, 12000);
       const t = (txt||"").trim();
-      // Accept XML feeds or raw JSON (object or array)
       if (t && (looksLikeFeed(t) || t.startsWith("{") || t.startsWith("["))) return t;
     } catch(e){ lastErr = e; }
   }
@@ -536,15 +573,15 @@ async function fetchFeed(inputUrl) {
     }
   }catch(e){ lastErr = e; }
 
-  /* PMO specific fallbacks */
-  if (/pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(url)) {
-    try { return await fetchPMOWordPressJSON(); } catch(e){ lastErr = e; }
-    try { return await scrapePMOAsJSON(); } catch(e){ lastErr = e; }
+  /* PMO fallbacks (paginate) */
+  if (/pmindia\.gov\.in\/en\/news-updates(\/feed\/)?$/i.test(url)) {
+    try { return await fetchPMOWordPressJSON(MAX_PAGES); } catch(e){ lastErr = e; }
+    try { return await scrapeListToJSON("https://www.pmindia.gov.in/en/news-updates/", /pmindia\.gov\.in/i, MAX_PAGES); } catch(e){ lastErr = e; }
   }
 
-  /* NewsOnAir category page: generic HTML scrape as last resort */
+  /* AIR category pages — paginate */
   if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)) {
-    try { return await scrapeListToJSON(url, /newsonair\.gov\.in/i); } catch(e){ lastErr = e; }
+    try { return await scrapeListToJSON(url, /newsonair\.gov\.in/i, MAX_PAGES); } catch(e){ lastErr = e; }
   }
 
   throw lastErr || new Error("All fallbacks failed");
@@ -554,7 +591,7 @@ function parseItems(payload, siteName) {
   if (!payload) return [];
   const trimmed = payload.trim();
 
-  /* JSON OBJECT: { items: [...] } (feed2json or custom scrapers) */
+  /* JSON OBJECT: { items: [...] } */
   if (trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
@@ -570,7 +607,7 @@ function parseItems(payload, siteName) {
     } catch { return []; }
   }
 
-  /* JSON ARRAY: [ {...}, ... ] (WordPress /wp-json/wp/v2/posts etc.) */
+  /* JSON ARRAY: [ {...}, ... ] (WordPress, etc.) */
   if (trimmed.startsWith("[")) {
     try {
       const arr = JSON.parse(trimmed);
