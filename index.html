@@ -154,7 +154,7 @@ function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","—":"—",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -434,7 +434,7 @@ async function fetchPMOWordPressJSON(){
   throw new Error("wp-json fallback failed");
 }
 
-/* Try: direct/proxy RSS → feed2json (items>0) → WP JSON → HTML scrape */
+/* Try: direct/proxy RSS → JSON (object/array) → feed2json → PMO fallbacks */
 async function fetchFeed(url) {
   const ttl = 180;
   const noProto = String(url).replace(/^https?:\/\//,'');
@@ -451,7 +451,9 @@ async function fetchFeed(url) {
   for (const u of attempts) {
     try {
       const txt = await fetchTextWithTimeout(u, 12000);
-      if (txt && txt.length>80 && looksLikeFeed(txt)) return txt; // RSS/Atom/XML
+      const t = (txt||"").trim();
+      // Accept XML or raw JSON (object or array)
+      if (t && (looksLikeFeed(t) || t.startsWith("{") || t.startsWith("["))) return t;
     } catch(e){ lastErr = e; }
   }
 
@@ -459,9 +461,10 @@ async function fetchFeed(url) {
   try{
     const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
     const js = await fetchTextWithTimeout(fj, 12000);
-    if (js && js.trim().startsWith("{")) {
-      const obj = JSON.parse(js);
-      if (obj && Array.isArray(obj.items) && obj.items.length > 0) return js;
+    const t = (js||"").trim();
+    if (t.startsWith("{")) {
+      const obj = JSON.parse(t);
+      if (obj && Array.isArray(obj.items) && obj.items.length > 0) return t;
     }
   }catch(e){ lastErr = e; }
 
@@ -478,7 +481,7 @@ function parseItems(payload, siteName) {
   if (!payload) return [];
   const trimmed = payload.trim();
 
-  // JSON path (feed2json, WP JSON, or scraper)
+  // JSON OBJECT: { items: [...] } (feed2json, our PMO scrapers)
   if (trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
@@ -486,11 +489,25 @@ function parseItems(payload, siteName) {
       const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
       return items.map(it => {
         const title = it.title || strip(it.summary || "") || "(no title)";
-        const link  = it.url || it.external_url || (typeof it.id==="string"?it.id:"");
+        const link  = it.url || it.link || it.external_url || (typeof it.id==="string"?it.id:"");
         const date  = new Date(it.date_published || it.date_modified || it.date || Date.now());
-        const summary = strip(it.summary || it.content_text || it.content_html || "");
+        const summary = strip(it.summary || it.content_text || it.content_html || it.excerpt || "");
         return { title, link, date, source: siteName, summary };
       }).filter(x=>x.title && x.link);
+    } catch { return []; }
+  }
+
+  // JSON ARRAY: [ {...}, {...} ] (WordPress /wp-json/wp/v2/posts)
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      const norm = (x)=>({
+        title: (x.title?.rendered || x.title || "").replace(/<[^>]*>/g,"").trim(),
+        link:  x.link || x.url || "",
+        date:  new Date(x.date || x.published || Date.now()),
+        summary: (x.excerpt?.rendered || x.summary || x.content?.rendered || "").replace(/<[^>]*>/g,"").trim()
+      });
+      return (Array.isArray(arr)?arr:[]).map(norm).filter(x=>x.title && x.link);
     } catch { return []; }
   }
 
