@@ -119,7 +119,7 @@ let sites = load(SK.sites) || [
   {name:"Google News — India (Top)", url:"https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — ISRO",       url:"https://news.google.com/rss/search?q=ISRO&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Appointments India", url:"https://news.google.com/rss/search?q=appointment+OR+%22takes+charge%22+OR+%22assumes+office%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
-  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN:en"},
+  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
   {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
   {name:"Reuters — India Business",  url:"https://feeds.reuters.com/reuters/INbusinessNews"},
@@ -133,7 +133,7 @@ let sites = load(SK.sites) || [
   /* ✅ PMO feed */
   {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
-  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN:en"}
+  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
 ];
 
 /* Default topics (used only if nothing in localStorage) */
@@ -170,10 +170,9 @@ function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v
     t={id:uid(), name:"PM addresses",
        words:"address, addresses, speech, remarks, to the nation, Mann Ki Baat, PM, Prime Minister",
        siteIds:[idx]};
-    topics.splice(5,0,t); // insert roughly mid-pack
+    topics.splice(5,0,t);
     save(SK.topics,topics);
   }else{
-    // force PM addresses to only read PMO feed
     if(!Array.isArray(t.siteIds) || t.siteIds.length!==1 || t.siteIds[0]!==idx){
       t.siteIds=[idx]; save(SK.topics,topics);
     }
@@ -326,29 +325,39 @@ function fetchTextWithTimeout(url, ms = 10000) {
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
-function firstFulfilled(promises) {
-  return new Promise((resolve, reject) => {
-    let pending = promises.length, lastErr;
-    promises.forEach(p => Promise.resolve(p).then(resolve, e => {
-      lastErr = e; if (--pending === 0) reject(lastErr);
-    }));
-  });
+
+/* Accept only real feeds (avoid cleaned HTML mirrors) */
+function looksLikeFeed(txt){
+  return /<(rss|feed|item|entry)\b/i.test(txt);
 }
+
+/* Try sources sequentially; stop at the first that looks like RSS/Atom */
 async function fetchFeed(url) {
   const ttl = 180; // seconds
   const tries = [];
+
   if (FAST_PROXY) {
-    const proxied = `${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`;
-    tries.push(fetchTextWithTimeout(proxied, 10000));
+    tries.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
   }
   tries.push(
-    fetchTextWithTimeout(url, 10000),
-    fetchTextWithTimeout(`https://r.jina.ai/http/${url}`, 10000),
-    fetchTextWithTimeout(`https://r.jina.ai/http://${url.replace(/^https?:\/\//,'')}`, 10000),
-    fetchTextWithTimeout(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`, 10000)
+    url,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://r.jina.ai/http/${url}`,
+    `https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`
   );
-  return firstFulfilled(tries);
+
+  let lastErr;
+  for (const u of tries) {
+    try {
+      const txt = await fetchTextWithTimeout(u, 10000);
+      if (txt && txt.length > 80 && looksLikeFeed(txt)) return txt;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("All fallbacks failed");
 }
+
 function parseItems(xmlText, siteName) {
   let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
   const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
@@ -391,14 +400,13 @@ function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,""
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  $("#age").value = (ui.age ?? "1d");   // keep “Any time” as ""
+  $("#age").value = (ui.age ?? "1d");
   $("#dedupe").checked=!!ui.dedupe;
 
   const siteIdx=activeSites();
   const since=parseAgeVal($("#age").value);
   const selected = (ui.sel && ui.sel[t.id]) ? ui.sel[t.id] : [];
-  // IMPORTANT: 'All' means "no headword filter"
-  const wordCSV = selected.length ? selected.join(",") : "";
+  const wordCSV = selected.length ? selected.join(",") : ""; // 'All' => no headword filter
   const match=buildMatcher(wordCSV);
   const wantDedupe=$("#dedupe").checked;
 
