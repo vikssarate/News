@@ -149,6 +149,19 @@ let sites = load(SK.sites) || [
   {name:"AIR News — National", url:"https://www.newsonair.gov.in/National_rss.aspx"},
   {name:"PIB — Press Releases (National, English)", url:"https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
+  // ——— Test firing + missile ———
+{ name:"Google News — “test firing” + missile (strict)",
+  url:"https://news.google.com/rss/search?q=%22test+firing%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
+
+{ name:"Google News — test-firing + missile (broader)",
+  url:"https://news.google.com/rss/search?q=%28%22test+firing%22+OR+test-firing+OR+%22test+fired%22+OR+%22test-fired%22+OR+%22test+fire%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
+
+// ——— Test flight + missile ———
+{ name:"Google News — “test flight” + missile (strict)",
+  url:"https://news.google.com/rss/search?q=%22test+flight%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
+
+{ name:"Google News — test flight / flight test + missile (broader)",
+  url:"https://news.google.com/rss/search?q=%28%22test+flight%22+OR+%22flight+test%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
   { name:"Google News — INS / Indian Navy (India)",
   url:"https://news.google.com/rss/search?q=%28INS+OR+%22Indian+Navy%22+OR+%22Indian+Naval+Ship%22+OR+warship+OR+frigate+OR+destroyer+OR+corvette+OR+submarine+OR+carrier%29+India+-insurance+-insulin+-instagram&hl=en-IN&gl=IN&ceid=IN:en" },
   // Strict: requires the exact phrase “successfully conducts” + flight test(s)
