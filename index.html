@@ -68,6 +68,7 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
       <label for="loadCfg" class="badge" style="cursor:pointer">Import</label>
       <input id="loadCfg" type="file" accept="application/json" class="hide"/>
       <button id="manageBtn">Manage</button>
+      <button id="resetCfg" title="Clear saved sites/topics/ui and reload">Reset</button>
     </div>
     <div id="pillLine" class="pills"></div>
   </div>
@@ -159,23 +160,48 @@ function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;",
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
-/* ---------- One-time migration to ensure PMO feed + topic ---------- */
-(function migratePMO(){
-  const PMO_URL="https://www.pmindia.gov.in/en/news-updates/feed/";
-  let idx = sites.findIndex(s=> String(s.url||"").replace(/\/+$/,'/')===PMO_URL);
-  if(idx===-1){ sites.push({name:"PMO India — News Updates", url:PMO_URL}); idx=sites.length-1; save(SK.sites,sites); }
+/* ------- Helpers to safely remove a site and fix topic indices ------- */
+function removeSiteAt(idx){
+  if (idx<0 || idx>=sites.length) return;
+  sites.splice(idx,1);
+  topics.forEach(t=>{
+    if(!Array.isArray(t.siteIds)) t.siteIds = [];
+    t.siteIds = t.siteIds
+      .filter(id=>id!==idx)
+      .map(id=> id>idx ? id-1 : id);
+  });
+  save(SK.sites,sites); save(SK.topics,topics);
+}
+
+/* ---------- One-time migration: ensure only the real PMO feed is used ---------- */
+(function cleanPMOSitesAndTopic(){
+  const isPMOFeed = u => /pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(String(u||""));
+  const isPMOPage = u => /pmindia\.gov\.in\/en\/news-updates\/?$/i.test(String(u||"")) && !isPMOFeed(u);
+
+  // remove any accidental non-feed page entries
+  for (let i=sites.length-1;i>=0;i--){
+    if (isPMOPage(sites[i].url)) removeSiteAt(i);
+  }
+
+  // ensure feed exists
+  let feedIdx = sites.findIndex(s=>isPMOFeed(s.url));
+  if (feedIdx === -1){
+    sites.push({name:"PMO India — News Updates", url:"https://www.pmindia.gov.in/en/news-updates/feed/"});
+    feedIdx = sites.length-1;
+    save(SK.sites,sites);
+  }
+
+  // ensure the "PM addresses" topic exists and uses ONLY the feed
   let t = topics.find(x=>/pm addresses/i.test(x.name));
   if(!t){
     t={id:uid(), name:"PM addresses",
        words:"address, addresses, speech, remarks, to the nation, Mann Ki Baat, PM, Prime Minister",
-       siteIds:[idx]};
+       siteIds:[feedIdx]};
     topics.splice(5,0,t);
-    save(SK.topics,topics);
   }else{
-    if(!Array.isArray(t.siteIds) || t.siteIds.length!==1 || t.siteIds[0]!==idx){
-      t.siteIds=[idx]; save(SK.topics,topics);
-    }
+    t.siteIds = [feedIdx];
   }
+  save(SK.topics,topics);
 })();
 
 /* ---------- UI ---------- */
@@ -279,8 +305,8 @@ function renderManage(){
       <button data-rm="${i}" style="border-color:var(--bad);color:var(--bad)">Remove</button>`;
     row.querySelector(`[data-rm="${i}"]`).onclick=()=>{
       if(!confirm(`Remove site "${s.name}"?`))return;
-      sites.splice(i,1);topics.forEach(t=>t.siteIds=(t.siteIds||[]).filter(id=>id!==i));
-      save(SK.sites,sites);save(SK.topics,topics);renderManage();renderPills();refresh();
+      removeSiteAt(i); // ✅ also fixes topic indices
+      renderManage(); renderPills(); refresh();
     };
     sBox.appendChild(row);
   });
@@ -340,30 +366,20 @@ async function scrapePMOAsJSON() {
   if (!html) throw new Error("PMO list HTML not reachable");
 
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const cards = [...doc.querySelectorAll("article, .post, .news-list li, .list-group-item")];
-  const fallback = [...doc.querySelectorAll("h2 a, h3 a, .entry-title a")];
-  const nodes = cards.length ? cards : fallback.map(a => ({querySelector:()=>a, textContent:a.textContent}));
-
-  const items = [];
-  const fmtDate = s => {
-    // Examples seen: "04 Sep, 2025" or "4 Sep, 2025"
-    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(s||"");
-    return m ? new Date(m[1]) : new Date();
-  };
-  nodes.forEach(n=>{
-    let a = n.querySelector ? n.querySelector("a") : null;
-    if (!a && n.href) a = n;
-    const href = a ? a.getAttribute("href") : "";
-    const title = (a ? a.textContent : (n.textContent||"")).trim();
-    if (!href || !title) return;
-    const dateEl = (n.querySelector && (n.querySelector(".date,.entry-date,time") || null));
-    const dateText = dateEl ? (dateEl.getAttribute("datetime") || dateEl.textContent) : html;
-    const summaryEl = n.querySelector && n.querySelector("p");
-    const summary = (summaryEl ? summaryEl.textContent : "").trim();
-    items.push({
-      title, url: href, date_published: fmtDate(dateText), summary
-    });
-  });
+  const anchors = [...doc.querySelectorAll("article h2 a, .news-list h2 a, .entry-title a, h2 a, h3 a")];
+  const items = anchors.slice(0, 30).map(a=>{
+    const title = (a.textContent||"").trim();
+    const href  = a.getAttribute("href") || "";
+    // Try to find a nearby date
+    const wrap = a.closest("article") || a.parentElement;
+    const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
+    const dtTx = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtTx);
+    const when = m ? new Date(m[1]) : new Date();
+    const p = wrap && wrap.querySelector("p");
+    const summary = p ? p.textContent.trim() : "";
+    return { title, url: href, date_published: when, summary };
+  }).filter(x=>x.title && x.url);
 
   return JSON.stringify({ items });
 }
@@ -371,27 +387,28 @@ async function scrapePMOAsJSON() {
 /* Try several endpoints; accept first *real* feed; then JSON; finally PMO HTML scrape */
 async function fetchFeed(url) {
   const ttl = 180;
+  const noProto = String(url).replace(/^https?:\/\//,'');
   const attempts = [];
   if (FAST_PROXY) attempts.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
   attempts.push(
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     `https://r.jina.ai/http/${url}`,
-    `https://r.jina.ai/http/${url.replace(/^https?:\/\//,'')}`
+    `https://r.jina.ai/http/${noProto}`
   );
 
   let lastErr;
   for (const u of attempts) {
     try {
-      const txt = await fetchTextWithTimeout(u, 10000);
+      const txt = await fetchTextWithTimeout(u, 12000);
       if (txt && txt.length>80 && looksLikeFeed(txt)) return txt; // RSS/Atom/XML
     } catch(e){ lastErr = e; }
   }
 
-  // JSON fallback via feed2json
+  // JSON fallback via feed2json (works for many feeds)
   try{
     const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
-    const js = await fetchTextWithTimeout(fj, 10000);
+    const js = await fetchTextWithTimeout(fj, 12000);
     if (js && js.trim().startsWith("{")) return js;
   }catch(e){ lastErr = e; }
 
@@ -417,7 +434,7 @@ function parseItems(payload, siteName) {
       const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
       return items.map(it => {
         const title = it.title || strip(it.summary || "") || "(no title)";
-        const link  = it.url || it.external_url || (it.id && typeof it.id === "string" ? it.id : "");
+        const link  = it.url || it.external_url || (typeof it.id==="string"?it.id:"");
         const date  = new Date(it.date_published || it.date_modified || it.date || Date.now());
         const summary = strip(it.summary || it.content_text || it.content_html || "");
         return { title, link, date, source: siteName, summary };
@@ -562,6 +579,13 @@ $("#loadCfg").addEventListener("change",(e)=>{
     renderTabs(); renderPills(); renderManage(); refresh();
   }catch(_){ alert("Invalid JSON"); } }; r.readAsText(f);
 });
+$("#resetCfg").onclick=()=>{
+  if(!confirm("Reset to built-in sites & topics and clear saved UI?")) return;
+  localStorage.removeItem(SK.sites);
+  localStorage.removeItem(SK.topics);
+  localStorage.removeItem(SK.ui);
+  location.reload();
+};
 
 /* ---------- Boot ---------- */
 renderTabs(); if(!ui.activeTopicId&&topics[0]){ui.activeTopicId=topics[0].id; save(SK.ui,ui);}
