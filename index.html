@@ -449,6 +449,7 @@ async function scrapePMOAsJSON() {
   if (!html) throw new Error("PMO list HTML not reachable");
 
   const makeAbs = (href) => { try { return new URL(href, base).href; } catch { return ""; } };
+
   const doc = new DOMParser().parseFromString(html, "text/html");
   const zone = doc.querySelector("main, #main, .main, .content, .container") || doc.body;
 
@@ -739,7 +740,7 @@ $("#manageBtn").onclick=()=>{$("#managePanel").classList.toggle("hide"); renderM
 $("#addTopic").onclick=addTopic;
 $("#addSite").onclick=()=>{
   const name=$("#sName").value.trim(), url=$("#sUrl").value.trim();
-  if(!name || !/^https?:\/\//i.test(url)) return alert("Add a valid site name and feed URL (https://…)");
+  if(!name || !/^https?:\/\//i.test(url)) return alert("Add a valid site name and feed URL (https://…)"); 
   sites.push({name,url}); save(SK.sites,sites); $("#sName").value=""; $("#sUrl").value=""; renderManage();
 };
 $("#saveCfg").onclick=()=>{
