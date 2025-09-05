@@ -108,7 +108,6 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 
 <script>
 /* ---------------- Config ---------------- */
-/* Use your Cloudflare Worker as the first-hop proxy (no trailing slash) */
 const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
 
 /* ---------- Storage & defaults ---------- */
@@ -317,7 +316,7 @@ function addTopic(){
   renderTabs(); renderPills(); renderManage();
 }
 
-/* ---------- Fetch & parse (fast + robust) ---------- */
+/* ---------- Fetch & parse (robust) ---------- */
 function fetchTextWithTimeout(url, ms = 10000) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
@@ -325,20 +324,13 @@ function fetchTextWithTimeout(url, ms = 10000) {
     .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
     .finally(() => clearTimeout(id));
 }
+function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
-/* Accept only real feeds (avoid cleaned HTML mirrors) */
-function looksLikeFeed(txt){
-  return /<(rss|feed|item|entry)\b/i.test(txt);
-}
-
-/* Try sources sequentially; stop at the first that looks like RSS/Atom */
+/* Try several endpoints; accept first *real* feed; final fallback = feed2json */
 async function fetchFeed(url) {
-  const ttl = 180; // seconds
+  const ttl = 180;
   const tries = [];
-
-  if (FAST_PROXY) {
-    tries.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
-  }
+  if (FAST_PROXY) tries.push(`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`);
   tries.push(
     url,
     `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
@@ -350,16 +342,41 @@ async function fetchFeed(url) {
   for (const u of tries) {
     try {
       const txt = await fetchTextWithTimeout(u, 10000);
-      if (txt && txt.length > 80 && looksLikeFeed(txt)) return txt;
-    } catch (e) {
-      lastErr = e;
-    }
+      if (txt && txt.length>80 && looksLikeFeed(txt)) return txt; // RSS/Atom/XML
+    } catch(e){ lastErr = e; }
   }
+
+  // JSON fallback via feed2json
+  try{
+    const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
+    return await fetchTextWithTimeout(fj, 10000); // returns JSON string
+  }catch(e){ lastErr = e; }
+
   throw lastErr || new Error("All fallbacks failed");
 }
 
-function parseItems(xmlText, siteName) {
-  let doc; try { doc = new DOMParser().parseFromString(xmlText, "text/xml"); } catch { return []; }
+function parseItems(payload, siteName) {
+  if (!payload) return [];
+  const trimmed = payload.trim();
+
+  // JSON path (feed2json)
+  if (trimmed.startsWith("{")) {
+    try {
+      const data = JSON.parse(trimmed);
+      const items = Array.isArray(data.items) ? data.items : [];
+      const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
+      return items.map(it => {
+        const title = it.title || strip(it.summary || "") || "(no title)";
+        const link  = it.url || it.external_url || (it.id && typeof it.id === "string" ? it.id : "");
+        const date  = new Date(it.date_published || it.date_modified || it.date || Date.now());
+        const summary = strip(it.summary || it.content_text || it.content_html || "");
+        return { title, link, date, source: siteName, summary };
+      }).filter(x=>x.title && x.link);
+    } catch { return []; }
+  }
+
+  // XML path
+  let doc; try { doc = new DOMParser().parseFromString(payload, "text/xml"); } catch { return []; }
   const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
   const txt = (el, sel) => (el.querySelector(sel)?.textContent || "").trim();
   const contentEncoded = el => {
@@ -400,7 +417,7 @@ function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,""
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  $("#age").value = (ui.age ?? "1d");
+  $("#age").value = (ui.age ?? "1d");   // keep “Any time” as ""
   $("#dedupe").checked=!!ui.dedupe;
 
   const siteIdx=activeSites();
@@ -456,8 +473,8 @@ async function refresh(){
       const i = queue.shift();
       const s = sites[i];
       try{
-        const xml = await fetchFeed(s.url);
-        parseItems(xml, s.name).forEach(it => all.push(it));
+        const payload = await fetchFeed(s.url);
+        parseItems(payload, s.name).forEach(it => all.push(it));
       }catch(e){
         const msg = (e && e.name === "AbortError") ? "Timed out" : (e?.message || String(e));
         errs.push(`${s.name}: ${msg}`);
