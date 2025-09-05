@@ -151,6 +151,13 @@ let sites = load(SK.sites) || [
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
   { name:"Google News — INS / Indian Navy (India)",
   url:"https://news.google.com/rss/search?q=%28INS+OR+%22Indian+Navy%22+OR+%22Indian+Naval+Ship%22+OR+warship+OR+frigate+OR+destroyer+OR+corvette+OR+submarine+OR+carrier%29+India+-insurance+-insulin+-instagram&hl=en-IN&gl=IN&ceid=IN:en" },
+  // Strict: requires the exact phrase “successfully conducts” + flight test(s)
+{ name:"Google News — DRDO ‘successfully conducts’ flight tests (strict)",
+  url:"https://news.google.com/rss/search?q=DRDO+%22successfully+conducts%22+%28%22flight+test%22+OR+%22flight+tests%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
+
+// Broader: catches wording variants (successful, tests, test-fired, flight trials, etc.)
+{ name:"Google News — DRDO flight tests (broader)",
+  url:"https://news.google.com/rss/search?q=%28DRDO+OR+%22Defence+Research+and+Development+Organisation%22%29+%28successfully+OR+successful%29+%28conducts+OR+tests+OR+test-fired+OR+%22carries+out%22%29+%28%22flight+test%22+OR+%22flight+tests%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
 
 { name:"Google News — Ship / Warship (India)",
   url:"https://news.google.com/rss/search?q=%28ship+OR+vessel+OR+warship+OR+frigate+OR+destroyer+OR+submarine+OR+carrier%29+India+-shipping+-shipment&hl=en-IN&gl=IN&ceid=IN:en" },
