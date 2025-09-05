@@ -38,7 +38,6 @@ hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 .source-chip{border:1px solid var(--line);padding:4px 8px;border-radius:999px;font-size:12px}
 .k{font-weight:600}
 .note{color:var(--muted);font-size:12px}
-/* + tab button */
 #addTabBtn{font-weight:700;opacity:.9}
 #addTabBtn:hover{opacity:1}
 </style>
@@ -130,7 +129,6 @@ let sites = load(SK.sites) || [
   {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
   {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
   {name:"The Print — All",           url:"https://theprint.in/feed/"},
-  /* ✅ PMO feed */
   {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
@@ -156,7 +154,7 @@ function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","—":"—",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
@@ -173,7 +171,7 @@ function removeSiteAt(idx){
   save(SK.sites,sites); save(SK.topics,topics);
 }
 
-/* ---------- One-time PMO setup / cleanup ---------- */
+/* ---------- PMO setup / cleanup ---------- */
 (function cleanPMOSitesAndTopic(){
   const isPMOFeed = u => /pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(String(u||""));
   const isPMOPage = u => /pmindia\.gov\.in\/en\/news-updates\/?$/i.test(String(u||"")) && !isPMOFeed(u);
@@ -349,7 +347,7 @@ function fetchTextWithTimeout(url, ms = 12000) {
 }
 function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
-/* PMO HTML → JSON (scraper) */
+/* PMO: HTML → JSON fallback */
 async function scrapePMOAsJSON() {
   const base = "https://www.pmindia.gov.in/en/news-updates/";
   const targets = [
@@ -404,7 +402,39 @@ async function scrapePMOAsJSON() {
   return JSON.stringify({ items });
 }
 
-/* Try several endpoints; accept real feed; then JSON (only if items>0); finally PMO HTML scrape */
+/* PMO: try WordPress JSON API */
+async function fetchPMOWordPressJSON(){
+  const endpoints = [
+    "https://www.pmindia.gov.in/en/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date",
+    "https://www.pmindia.gov.in/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date"
+  ];
+  const wrappers = (u)=>[
+    "https://r.jina.ai/http/"+u.replace(/^https?:\/\//,'https://'),
+    "https://api.allorigins.win/raw?url="+encodeURIComponent(u)
+  ];
+  for(const ep of endpoints){
+    for(const w of wrappers(ep)){
+      try{
+        const t = await fetchTextWithTimeout(w, 12000);
+        if (t && t.trim().startsWith("[")) {
+          const arr = JSON.parse(t);
+          if (Array.isArray(arr) && arr.length){
+            const items = arr.map(x=>({
+              title: (x.title && (x.title.rendered||"")).replace(/<[^>]*>/g,"").trim(),
+              url: x.link,
+              date_published: x.date,
+              summary: (x.excerpt && (x.excerpt.rendered||"")).replace(/<[^>]*>/g,"").trim()
+            })).filter(x=>x.title && x.url);
+            if (items.length) return JSON.stringify({items});
+          }
+        }
+      }catch{}
+    }
+  }
+  throw new Error("wp-json fallback failed");
+}
+
+/* Try: direct/proxy RSS → feed2json (items>0) → WP JSON → HTML scrape */
 async function fetchFeed(url) {
   const ttl = 180;
   const noProto = String(url).replace(/^https?:\/\//,'');
@@ -425,25 +455,20 @@ async function fetchFeed(url) {
     } catch(e){ lastErr = e; }
   }
 
-  // JSON fallback via feed2json — only accept if it has items
+  // feed2json — only if it returns items
   try{
     const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
     const js = await fetchTextWithTimeout(fj, 12000);
     if (js && js.trim().startsWith("{")) {
-      try {
-        const obj = JSON.parse(js);
-        if (obj && Array.isArray(obj.items) && obj.items.length > 0) {
-          return js;
-        }
-      } catch {}
+      const obj = JSON.parse(js);
+      if (obj && Array.isArray(obj.items) && obj.items.length > 0) return js;
     }
   }catch(e){ lastErr = e; }
 
-  // PMO-only: scrape HTML if feed blocked everywhere or JSON empty
+  // PMO specific fallbacks
   if (/pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(url)) {
-    try {
-      return await scrapePMOAsJSON();
-    } catch(e){ lastErr = e; }
+    try { return await fetchPMOWordPressJSON(); } catch(e){ lastErr = e; }
+    try { return await scrapePMOAsJSON(); } catch(e){ lastErr = e; }
   }
 
   throw lastErr || new Error("All fallbacks failed");
@@ -453,7 +478,7 @@ function parseItems(payload, siteName) {
   if (!payload) return [];
   const trimmed = payload.trim();
 
-  // JSON path (feed2json or our scraper)
+  // JSON path (feed2json, WP JSON, or scraper)
   if (trimmed.startsWith("{")) {
     try {
       const data = JSON.parse(trimmed);
@@ -511,13 +536,13 @@ function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,""
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  $("#age").value = (ui.age ?? "1d");   // keep “Any time” as ""
+  $("#age").value = (ui.age ?? "1d");
   $("#dedupe").checked=!!ui.dedupe;
 
   const siteIdx=activeSites();
   const since=parseAgeVal($("#age").value);
   const selected = (ui.sel && ui.sel[t.id]) ? ui.sel[t.id] : [];
-  const wordCSV = selected.length ? selected.join(",") : ""; // 'All' => no headword filter
+  const wordCSV = selected.length ? selected.join(",") : ""; // 'All' => no filter
   const match=buildMatcher(wordCSV);
   const wantDedupe=$("#dedupe").checked;
 
