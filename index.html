@@ -305,7 +305,7 @@ function renderManage(){
       <button data-rm="${i}" style="border-color:var(--bad);color:var(--bad)">Remove</button>`;
     row.querySelector(`[data-rm="${i}"]`).onclick=()=>{
       if(!confirm(`Remove site "${s.name}"?`))return;
-      removeSiteAt(i); // ✅ also fixes topic indices
+      removeSiteAt(i);
       renderManage(); renderPills(); refresh();
     };
     sBox.appendChild(row);
@@ -343,7 +343,7 @@ function addTopic(){
 }
 
 /* ---------- Fetch & parse (robust) ---------- */
-function fetchTextWithTimeout(url, ms = 10000) {
+function fetchTextWithTimeout(url, ms = 12000) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   return fetch(url, { signal: ctrl.signal })
@@ -352,34 +352,63 @@ function fetchTextWithTimeout(url, ms = 10000) {
 }
 function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
 
-/* Site-specific HTML → JSON scraper for PMO (last resort) */
+/* PMO HTML → JSON (stronger scraper) */
 async function scrapePMOAsJSON() {
+  const base = "https://www.pmindia.gov.in/en/news-updates/";
   const targets = [
     "https://r.jina.ai/http/https://www.pmindia.gov.in/en/news-updates/",
     "https://r.jina.ai/http/http://www.pmindia.gov.in/en/news-updates/",
-    "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.pmindia.gov.in/en/news-updates/")
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(base)
   ];
   let html = "";
   for (const u of targets) {
-    try { html = await fetchTextWithTimeout(u, 10000); if (html) break; } catch {}
+    try { const t = await fetchTextWithTimeout(u, 12000); if (t && t.length>200) { html=t; break; } } catch {}
   }
   if (!html) throw new Error("PMO list HTML not reachable");
 
+  const makeAbs = (href) => {
+    try { return new URL(href, base).href; } catch { return ""; }
+  };
+
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const anchors = [...doc.querySelectorAll("article h2 a, .news-list h2 a, .entry-title a, h2 a, h3 a")];
-  const items = anchors.slice(0, 30).map(a=>{
-    const title = (a.textContent||"").trim();
-    const href  = a.getAttribute("href") || "";
-    // Try to find a nearby date
-    const wrap = a.closest("article") || a.parentElement;
+  const zone = doc.querySelector("main, #main, .main, .content, .container") || doc.body;
+
+  // collect many anchors; filter by text quality and domain
+  const anchors = [...zone.querySelectorAll("a")].filter(a=>{
+    const txt = (a.textContent||"").trim();
+    const href = a.getAttribute("href") || "";
+    if (!txt || txt.length < 10) return false;              // too short (nav etc.)
+    if (txt.split(/\s+/).length < 2) return false;          // likely a chip/label
+    if (!href || href.startsWith("#")) return false;
+    const abs = makeAbs(href);
+    if (!/pmindia\.gov\.in/i.test(abs)) return false;
+    // avoid obvious nav/footer
+    const cls = (a.className||"") + " " + (a.parentElement?.className||"");
+    if (/(menu|nav|breadcrumb|footer|share|social)/i.test(cls)) return false;
+    return true;
+  });
+
+  // dedupe by URL; keep DOM order
+  const seen = new Set();
+  const items = [];
+  anchors.forEach((a, i) => {
+    const href = makeAbs(a.getAttribute("href") || "");
+    if (!href || seen.has(href)) return;
+    seen.add(href);
+
+    // date: prefer nearby <time> or .date; else synthesize (keeps ordering)
+    const wrap = a.closest("article, li, .post, .news, .entry") || a.parentElement;
     const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
-    const dtTx = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
-    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtTx);
-    const when = m ? new Date(m[1]) : new Date();
+    const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+    let when;
+    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtRaw);
+    if (m) { when = new Date(m[1]); } else { when = new Date(Date.now() - i*3600e3); }
+
     const p = wrap && wrap.querySelector("p");
     const summary = p ? p.textContent.trim() : "";
-    return { title, url: href, date_published: when, summary };
-  }).filter(x=>x.title && x.url);
+
+    items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
+  });
 
   return JSON.stringify({ items });
 }
