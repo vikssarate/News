@@ -114,11 +114,12 @@ const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
 /* ---------- Storage & defaults ---------- */
 const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
 
+/* Default sites (used only if nothing in localStorage) */
 let sites = load(SK.sites) || [
   {name:"Google News — India (Top)", url:"https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — ISRO",       url:"https://news.google.com/rss/search?q=ISRO&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Appointments India", url:"https://news.google.com/rss/search?q=appointment+OR+%22takes+charge%22+OR+%22assumes+office%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
-  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN:en"},
   {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
   {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
   {name:"Reuters — India Business",  url:"https://feeds.reuters.com/reuters/INbusinessNews"},
@@ -129,12 +130,13 @@ let sites = load(SK.sites) || [
   {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
   {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
   {name:"The Print — All",           url:"https://theprint.in/feed/"},
-  /* ✅ NEW: PMO feed */
+  /* ✅ PMO feed */
   {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
-  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
+  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN:en"}
 ];
 
+/* Default topics (used only if nothing in localStorage) */
 let topics = load(SK.topics) || [
   {id:uid(), name:"Appointments", words:"appointed, appointment, takes charge, assumes office, named as, elected as, reappointed, CEO, chairman, governor, chief secretary, CMD, MD, director general, DG, CJI, chief justice, army chief, navy chief, air chief, vice chancellor", siteIds:sites.map((_,i)=>i)},
   {id:uid(), name:"Obituaries", words:"passes away, dies, dead, obituary, veteran, noted, eminent, padma awardee, former, ex-, legend", siteIds:sites.map((_,i)=>i)},
@@ -148,24 +150,39 @@ let topics = load(SK.topics) || [
   {id:uid(), name:"Govt Schemes / Policy", words:"scheme, yojana, portal, guidelines, cabinet approves, bill passed, ordinance, notification, gazette, draft policy", siteIds:sites.map((_,i)=>i)}
 ];
 
-let ui = load(SK.ui) || {
-  activeTopicId: topics[0]?.id || null,
-  age:"1d",
-  dedupe:true,
-  sel:{}          // per-topic selected headwords
-};
-
 /* ---------- Utils ---------- */
 function load(k){ try{return JSON.parse(localStorage.getItem(k)||"null");}catch(_){return null} }
 function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
 function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
 const $ = s => document.querySelector(s);
 function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
-function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;","—":"—",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
 function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
 function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
 
+/* ---------- One-time migration to ensure PMO feed + topic ---------- */
+(function migratePMO(){
+  const PMO_URL="https://www.pmindia.gov.in/en/news-updates/feed/";
+  let idx = sites.findIndex(s=> String(s.url||"").replace(/\/+$/,'/')===PMO_URL);
+  if(idx===-1){ sites.push({name:"PMO India — News Updates", url:PMO_URL}); idx=sites.length-1; save(SK.sites,sites); }
+  let t = topics.find(x=>/pm addresses/i.test(x.name));
+  if(!t){
+    t={id:uid(), name:"PM addresses",
+       words:"address, addresses, speech, remarks, to the nation, Mann Ki Baat, PM, Prime Minister",
+       siteIds:[idx]};
+    topics.splice(5,0,t); // insert roughly mid-pack
+    save(SK.topics,topics);
+  }else{
+    // force PM addresses to only read PMO feed
+    if(!Array.isArray(t.siteIds) || t.siteIds.length!==1 || t.siteIds[0]!==idx){
+      t.siteIds=[idx]; save(SK.topics,topics);
+    }
+  }
+})();
+
 /* ---------- UI ---------- */
+let ui = load(SK.ui) || { activeTopicId: topics[0]?.id || null, age:"1d", dedupe:true, sel:{} };
+
 function renderTabs(){
   const bar=$("#tabs"); bar.innerHTML="";
   topics.forEach(t=>{
@@ -374,14 +391,14 @@ function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,""
 async function refresh(){
   const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
   $("#status").classList.remove("hide"); $("#results").innerHTML="";
-  // keep “Any time” (empty string) when chosen
-  $("#age").value = (ui.age ?? "1d");
+  $("#age").value = (ui.age ?? "1d");   // keep “Any time” as ""
   $("#dedupe").checked=!!ui.dedupe;
 
   const siteIdx=activeSites();
   const since=parseAgeVal($("#age").value);
   const selected = (ui.sel && ui.sel[t.id]) ? ui.sel[t.id] : [];
-  const wordCSV = (selected.length ? selected.join(",") : (t.words||""));
+  // IMPORTANT: 'All' means "no headword filter"
+  const wordCSV = selected.length ? selected.join(",") : "";
   const match=buildMatcher(wordCSV);
   const wantDedupe=$("#dedupe").checked;
 
@@ -409,11 +426,20 @@ async function refresh(){
         <div class="note" style="margin-top:6px">${escapeHtml((it.summary||"").slice(0,220))}${(it.summary||"").length>220?'…':''}</div>
       </div>`).join("");
 
+    let body;
+    if (cards) {
+      body = cards;
+    } else if (done === siteIdx.length) {
+      body = `<div class="card">No stories matched your filters.</div>`;
+    } else {
+      body = `<div class="card">Fetching… (sources ${done}/${siteIdx.length})</div>`;
+    }
+
     const progress = `<div class="note" style="margin-top:10px">
       Fetched ${done}/${siteIdx.length} sources${errs.length?` — some failed: ${escapeHtml(errs.join("; "))}`:""}.
     </div>`;
 
-    $("#results").innerHTML = (cards || `<div class="card">Fetching… (sources ${done}/${siteIdx.length})</div>`) + progress;
+    $("#results").innerHTML = body + progress;
   }
 
   const WORKERS = Math.min(6, queue.length);
