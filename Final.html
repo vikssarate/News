@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Current Affairs News Filter — Headword & Source Based</title>
+<style>
+:root{--bg:#0f1220;--card:#181c2f;--ink:#eef1ff;--muted:#9aa3c7;--line:#2a3052;--ok:#7bd88f;--warn:#ffd166;--bad:#ff7575;--accent:#6ca8ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial}
+header,footer{padding:12px 16px;display:flex;align-items:center;justify-content:space-between}
+h1{margin:0;font-size:18px}
+.wrap{max-width:1100px;margin:0 auto;padding:16px}
+.panel{background:var(--card);border-radius:12px;padding:14px;box-shadow:0 0 0 1px rgba(255,255,255,.05) inset}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input,select,button,textarea{background:#12162a;border:1px solid var(--line);color:var(--ink);padding:8px 10px;border-radius:8px}
+textarea{min-height:76px}
+button{cursor:pointer}
+.primary{background:linear-gradient(180deg,#2f67ff,#2149c8);border:none}
+.badge{padding:3px 8px;border-radius:999px;border:1px solid var(--line);font-size:12px;margin-left:6px}
+.card{background:#12162a;border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:10px}
+a{color:var(--accent);text-decoration:none}
+small{color:var(--muted)}
+.hide{display:none}
+.tabs{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.tabbtn{border:1px solid var(--line);background:#12162a;padding:8px 12px;border-radius:9px}
+.tabbtn.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.pills{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.pill{border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;background:#101429}
+.pill.word{cursor:pointer;user-select:none}
+.pill.word.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset;background:#151c3a}
+.pill.action{opacity:.8}
+.grid{display:grid;gap:10px}
+@media(min-width:800px){ .grid{grid-template-columns:1.2fr 2fr} }
+.spinner{width:16px;height:16px;border:2px solid #ffffff33;border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
+.source-chip{border:1px solid var(--line);padding:4px 8px;border-radius:999px;font-size:12px}
+.k{font-weight:600}
+.note{color:var(--muted);font-size:12px}
+#addTabBtn{font-weight:700;opacity:.9}
+#addTabBtn:hover{opacity:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>Current Affairs News Filter</h1>
+  <div class="row"><span class="note">Local-only • RSS/Atom in your browser</span></div>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <div class="tabs" id="tabs"></div>
+    <div class="row">
+      <label>Newer than:
+        <select id="age">
+          <option value="1d" selected>24 hours</option>
+          <option value="3d">3 days</option>
+          <option value="7d">7 days</option>
+          <option value="30d">30 days</option>
+          <option value="">Any time</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="dedupe" checked> De-duplicate similar titles</label>
+      <button id="refresh" class="primary">Refresh</button>
+      <button id="saveCfg">Export JSON</button>
+      <label for="loadCfg" class="badge" style="cursor:pointer">Import</label>
+      <input id="loadCfg" type="file" accept="application/json" class="hide"/>
+      <button id="manageBtn">Manage</button>
+      <button id="resetCfg" title="Clear saved sites/topics/ui and reload">Reset</button>
+    </div>
+    <div id="pillLine" class="pills"></div>
+  </div>
+
+  <!-- Manage -->
+  <div class="panel hide" id="managePanel">
+    <div class="grid">
+      <div>
+        <h3 style="margin:0 0 6px 0">Topics</h3>
+        <div class="note">Name + headwords (comma-separated). Choose which sites to include.</div>
+        <div id="topicsList"></div>
+        <hr class="sep"/>
+        <div class="row"><input id="tName" placeholder="New topic name" style="flex:1"></div>
+        <div class="row"><textarea id="tWords" placeholder="keywords/headwords (comma)"></textarea></div>
+        <div class="row" id="tSites" style="max-height:120px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px"></div>
+        <div class="row"><button id="addTopic" class="primary">Add topic</button></div>
+      </div>
+      <div>
+        <h3 style="margin:0 0 6px 0">News Sites (RSS/Atom)</h3>
+        <div class="note">Add any RSS/Atom feed. (The app auto-handles CORS via safe fallbacks.)</div>
+        <div id="sitesList"></div>
+        <hr class="sep"/>
+        <div class="row"><input id="sName" placeholder="Site name" style="flex:1"></div>
+        <div class="row"><input id="sUrl" placeholder="Feed URL (https://…)" style="flex:1"></div>
+        <div class="row"><button id="addSite" class="primary">Add site</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="status" class="row hide" style="margin-top:10px"><div class="spinner"></div><small>&nbsp;Fetching feeds…</small></div>
+  <div id="results"></div>
+</div>
+
+<footer class="row" style="justify-content:space-between">
+  <small>Tip: tap headwords to filter. Tap “All” to reset. Click a title to read on the original site.</small>
+  <small><a href="https://news.google.com/rss" target="_blank" rel="noopener">Uses site RSS/Atom feeds (no API keys)</a></small>
+</footer>
+
+<script>
+/* ---------------- Config ---------------- */
+const FAST_PROXY = "https://rss-proxy.vikssarate.workers.dev";
+/* Crawl depth for paginated list pages */
+const MAX_PAGES = 10;
+
+/* ---------- Storage & defaults ---------- */
+const SK = { sites:"newsfilter.sites.v1", topics:"newsfilter.topics.v1", ui:"newsfilter.ui.v1" };
+
+/* Default sites (used only if nothing in localStorage) */
+let sites = load(SK.sites) || [
+  {name:"Google News — India (Top)", url:"https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — ISRO",       url:"https://news.google.com/rss/search?q=ISRO&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Appointments India", url:"https://news.google.com/rss/search?q=appointment+OR+%22takes+charge%22+OR+%22assumes+office%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
+  { name:"Google News — Joint Military Exercise (India)",
+  url:"https://news.google.com/rss/search?q=(%22joint%20military%20exercise%22%20OR%20%22joint%20exercise%22%20OR%20%22bilateral%20exercise%22%20OR%20%22multilateral%20exercise%22)%20(India%20OR%20%22Indian%20Army%22%20OR%20%22Indian%20Navy%22%20OR%20IAF%20OR%20%22Armed%20Forces%20of%20India%22)&hl=en-IN&gl=IN&ceid=IN:en" },
+  {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
+  {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
+  {name:"Reuters — India Business",  url:"https://feeds.reuters.com/reuters/INbusinessNews"},
+  {name:"BusinessLine — Economy",    url:"https://www.thehindubusinessline.com/economy/feeder/default.rss"},
+  {name:"Business Standard — Economy & Policy", url:"https://www.business-standard.com/rss/economy-policy-102.rss"},
+  {name:"Moneycontrol — Economy",    url:"https://www.moneycontrol.com/rss/economy.xml"},
+  {name:"The Hindu — National",      url:"https://www.thehindu.com/news/national/feeder/default.rss"},
+  {name:"The Hindu — Athletics", url:"https://www.thehindu.com/sport/athletics/feeder/default.rss"},
+  {name:"The Hindu — Cricket", url:"https://www.thehindu.com/sport/cricket/feeder/default.rss"},
+  {name:"Indian Express — India",    url:"https://indianexpress.com/section/india/feed/"},
+  {name:"The Hindu — Football", url:"https://www.thehindu.com/sport/football/feeder/default.rss"},
+  {name:"The Hindu — Hockey", url:"https://www.thehindu.com/sport/hockey/feeder/default.rss"},
+  {name:"The Hindu — Tennis", url:"https://www.thehindu.com/sport/tennis/feeder/default.rss"},
+  {name:"The Hindu — Motorsport", url:"https://www.thehindu.com/sport/motorsport/feeder/default.rss"},
+  {name:"The Hindu — Races", url:"https://www.thehindu.com/sport/races/feeder/default.rss"},
+  {name:"The Hindu — Other Sports", url:"https://www.thehindu.com/sport/other-sports/feeder/default.rss"},
+  {name:"ANI — National (General News)", url:"https://aninews.in/rss/feed/category/national/general-news.xml"},
+  {name:"LiveMint — Homepage",       url:"https://www.livemint.com/rss/homepage"},
+  {name:"LiveMint — Sports", url:"https://www.livemint.com/rss/sports"},
+  {name:"The Print — All",           url:"https://theprint.in/feed/"},
+  {name:"LiveMint — News", url:"https://www.livemint.com/rss/news"},
+  {name:"Indian Express — Education (Festivals)", url:"https://indianexpress.com/section/education/festivals/feed/"},
+  {name:"Indian Express — News Today", url:"https://indianexpress.com/section/news-today/feed/"},
+  {name:"PMO India — News Updates",  url:"https://www.pmindia.gov.in/en/news-updates/feed/"},
+  {name:"AIR News — National", url:"https://www.newsonair.gov.in/National_rss.aspx"},
+  {name:"PIB — Press Releases (National, English)", url:"https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"},
+  {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
+  // ——— Test firing + missile ———
+{ name:"Google News — “test firing” + missile (strict)",
+  url:"https://news.google.com/rss/search?q=%22test+firing%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
+  { name:"GNews — PM inaugurate", url:"https://news.google.com/rss/search?q=PM+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
+{ name:"GNews — Prime Minister inaugurate", url:"https://news.google.com/rss/search?q=%22Prime+Minister%22+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
+{ name:"GNews — “PM to inaugurate”", url:"https://news.google.com/rss/search?q=%22PM+to+inaugurate%22&hl=en-IN&gl=IN&ceid=IN:en" },
+// Optional broad one:
+{ name:"GNews — PM/PMO inaugurations (broad)", url:"https://news.google.com/rss/search?q=%28PM+inaugurate+OR+PM+inaugurates+OR+%22PM+to+inaugurate%22+OR+%22Prime+Minister%22+inaugurate+OR+%22Prime+Minister%22+inaugurates%29&hl=en-IN&gl=IN&ceid=IN:en" },
+
+{ name:"Google News — test-firing + missile (broader)",
+  url:"https://news.google.com/rss/search?q=%28%22test+firing%22+OR+test-firing+OR+%22test+fired%22+OR+%22test-fired%22+OR+%22test+fire%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
+
+// ——— Test flight + missile ———
+{ name:"Google News — “test flight” + missile (strict)",
+  url:"https://news.google.com/rss/search?q=%22test+flight%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
+
+{ name:"Google News — test flight / flight test + missile (broader)",
+  url:"https://news.google.com/rss/search?q=%28%22test+flight%22+OR+%22flight+test%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
+  { name:"Google News — INS / Indian Navy (India)",
+  url:"https://news.google.com/rss/search?q=%28INS+OR+%22Indian+Navy%22+OR+%22Indian+Naval+Ship%22+OR+warship+OR+frigate+OR+destroyer+OR+corvette+OR+submarine+OR+carrier%29+India+-insurance+-insulin+-instagram&hl=en-IN&gl=IN&ceid=IN:en" },
+  // Strict: requires the exact phrase “successfully conducts” + flight test(s)
+{ name:"Google News — DRDO ‘successfully conducts’ flight tests (strict)",
+  url:"https://news.google.com/rss/search?q=DRDO+%22successfully+conducts%22+%28%22flight+test%22+OR+%22flight+tests%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
+
+// Broader: catches wording variants (successful, tests, test-fired, flight trials, etc.)
+{ name:"Google News — DRDO flight tests (broader)",
+  url:"https://news.google.com/rss/search?q=%28DRDO+OR+%22Defence+Research+and+Development+Organisation%22%29+%28successfully+OR+successful%29+%28conducts+OR+tests+OR+test-fired+OR+%22carries+out%22%29+%28%22flight+test%22+OR+%22flight+tests%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
+  {name:"Times of India — environment", url:"https://timesofindia.indiatimes.com/rssfeeds/2647163.cms"},
+  { name: "TOI — sports", url: "https://timesofindia.indiatimes.com/rssfeeds/4719148.cms" },
+  { name:"LiveMint — environmentWildlife", url:"https://www.livemint.com/rss/news" },
+  { name:"LiveMint — News", url:"https://www.livemint.com/rss/news" },
+  { name:"The Hindu — environment", url:"https://www.thehindu.com/news/national/feeder/default.rss" },
+
+{ name:"Google News — Ship / Warship (India)",
+  url:"https://news.google.com/rss/search?q=%28ship+OR+vessel+OR+warship+OR+frigate+OR+destroyer+OR+submarine+OR+carrier%29+India+-shipping+-shipment&hl=en-IN&gl=IN&ceid=IN:en" },
+  {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
+];
+
+/* Default topics (used only if nothing in localStorage) */
+let topics = load(SK.topics) || [
+  {id:uid(), name:"Appointments", words:"appointed, appointment, takes charge, assumes office, named as, elected as, reappointed, CEO, chairman, governor, chief secretary, CMD, MD, director general, DG, CJI, chief justice, army chief, navy chief, air chief, vice chancellor", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Obituaries", words:"passes away, dies, dead, obituary, veteran, noted, eminent, padma awardee, former, ex-, legend", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"ISRO / Space", words:"ISRO, PSLV, GSLV, LVM3, SSLV, Chandrayaan, Aditya-L1, XpoSat, satellite, payload, launch, mission, spaceport, Satish Dhawan, INSPACe", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Defence & Security", words:"DRDO, missile, Agni, Pralay, BrahMos, induction, procurement, trial, exercise, Navy, Army, IAF, Coast Guard, border, LAC", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Economy & RBI", words:"RBI, MPC, repo rate, inflation, CPI, WPI, GDP, IIP, GST collection, current account deficit, forex reserves, PMI", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Awards & Honours", words:"award, awards, won, conferred, receives, Bharat Ratna, Padma, Arjuna, Dronacharya, Khel Ratna, Sahitya Akademi, Booker, Nobel, Ramon Magsaysay", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Science & Environment", words:"scientists, research, discovery, breakthrough, climate, monsoon, cyclone, IMD, heatwave, wildlife, sanctuary, national park, tiger census, Ramsar", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"International / Summits", words:"summit, bilateral, MoU, G20, SCO, BRICS, Quad, UNSC, UNGA, state visit, foreign minister, strategic dialogue", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Sports Highlights", words:"wins, clinches, beats, champion, world cup, asian games, olympics, national games, records", siteIds:sites.map((_,i)=>i)},
+  {id:uid(), name:"Govt Schemes / Policy", words:"scheme, yojana, portal, guidelines, cabinet approves, bill passed, ordinance, notification, gazette, draft policy", siteIds:sites.map((_,i)=>i)}
+];
+
+/* ---------- Utils ---------- */
+function load(k){ try{return JSON.parse(localStorage.getItem(k)||"null");}catch(_){return null} }
+function save(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
+function uid(){ return crypto.randomUUID?crypto.randomUUID():(Date.now()+"-"+Math.random().toString(16).slice(2)); }
+const $ = s => document.querySelector(s);
+function el(t,a={},h=""){const e=document.createElement(t);for(const[k,v]of Object.entries(a))e.setAttribute(k,v);if(h)e.innerHTML=h;return e;}
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]))}
+function ago(d){const ms=Date.now()-d.getTime();const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<48)return h+"h";return Math.round(h/24)+"d";}
+function parseAgeVal(v){if(!v&&v!=="")return null;const m=/^(\d+)([dm])$/.exec(v);if(!m)return null;const n=+m[1];return new Date(Date.now()-(m[2]==="d"?n*24*3600e3:n*60e3));}
+
+/* ------- Helpers to safely remove a site and fix topic indices ------- */
+function removeSiteAt(idx){
+  if (idx<0 || idx>=sites.length) return;
+  sites.splice(idx,1);
+  topics.forEach(t=>{
+    if(!Array.isArray(t.siteIds)) t.siteIds = [];
+    t.siteIds = t.siteIds
+      .filter(id=>id!==idx)
+      .map(id=> id>idx ? id-1 : id);
+  });
+  save(SK.sites,sites); save(SK.topics,topics);
+}
+
+/* ---------- PMO setup / cleanup ---------- */
+(function cleanPMOSitesAndTopic(){
+  const isPMOFeed = u => /pmindia\.gov\.in\/en\/news-updates\/feed\/?$/i.test(String(u||""));
+  const isPMOPage = u => /pmindia\.gov\.in\/en\/news-updates\/?$/i.test(String(u||"")) && !isPMOFeed(u);
+
+  for (let i=sites.length-1;i>=0;i--){
+    if (isPMOPage(sites[i].url)) removeSiteAt(i);
+  }
+
+  let feedIdx = sites.findIndex(s=>isPMOFeed(s.url));
+  if (feedIdx === -1){
+    sites.push({name:"PMO India — News Updates", url:"https://www.pmindia.gov.in/en/news-updates/feed/"});
+    feedIdx = sites.length-1;
+    save(SK.sites,sites);
+  }
+
+  let t = topics.find(x=>/pm addresses/i.test(x.name));
+  if(!t){
+    t={id:uid(), name:"PM addresses",
+       words:"address, addresses, speech, remarks, to the nation, Mann Ki Baat, PM, Prime Minister",
+       siteIds:[feedIdx]};
+    topics.splice(5,0,t);
+  }else{
+    t.siteIds = [feedIdx];
+  }
+  save(SK.topics,topics);
+})();
+
+/* ---------- UI ---------- */
+let ui = load(SK.ui) || { activeTopicId: topics[0]?.id || null, age:"1d", dedupe:true, sel:{} };
+
+function renderTabs(){
+  const bar=$("#tabs"); bar.innerHTML="";
+  topics.forEach(t=>{
+    const b=el("button",{class:"tabbtn"+(t.id===ui.activeTopicId?" active":""), title:t.name},escapeHtml(t.name));
+    b.onclick=()=>{ui.activeTopicId=t.id;save(SK.ui,ui);renderTabs();renderPills();refresh();};
+    bar.appendChild(b);
+  });
+  const plus=el("button",{class:"tabbtn",id:"addTabBtn",title:"Add a new tab"},"＋");
+  plus.onclick=quickAddTopic;
+  bar.appendChild(plus);
+}
+function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]||null;}
+function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
+function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
+
+/* Quick-add (＋) */
+function quickAddTopic(){
+  const name=prompt("New tab name (e.g., ‘Health’):"); if(!name) return;
+  const words=prompt("Headwords / keywords (comma-separated):\n(e.g., WHO, vaccine, health ministry, outbreak)")||"";
+  const siteIds=sites.map((_,i)=>i);
+  const t={id:uid(),name:name.trim(),words:words.trim(),siteIds};
+  topics.push(t);
+  ui.activeTopicId=t.id;
+  save(SK.topics,topics); save(SK.ui,ui);
+  renderTabs(); renderPills(); refresh();
+}
+
+/* Pills */
+function renderPills(){
+  const holder = $("#pillLine");
+  holder.innerHTML = "";
+  const t = activeTopic(); if(!t) return;
+
+  const allWords = wordsForActive();
+  const selected = (ui.sel && ui.sel[t.id]) ? [...ui.sel[t.id]] : [];
+
+  const allPill = el("span",{class:"pill word"+(selected.length===0?" active":""),role:"button"},"All");
+  allPill.onclick = ()=>{ delete ui.sel[t.id]; save(SK.ui,ui); renderPills(); refresh(); };
+  holder.appendChild(allPill);
+
+  allWords.forEach(w=>{
+    const sp = el("span",{class:"pill word"+(selected.includes(w)?" active":""),role:"button","data-word":w},escapeHtml(w));
+    sp.onclick = ()=>{
+      const set = new Set(ui.sel[t.id]||[]);
+      set.has(w)?set.delete(w):set.add(w);
+      ui.sel[t.id] = Array.from(set);
+      if (ui.sel[t.id].length===0) delete ui.sel[t.id];
+      save(SK.ui,ui);
+      renderPills();
+      refresh();
+    };
+    holder.appendChild(sp);
+  });
+
+  const siteIdx = activeSites();
+  if (siteIdx.length){
+    holder.appendChild(el("span",{class:"pill action"},"•"));
+    siteIdx.forEach(i=>{
+      holder.appendChild(el("span",{class:"pill source-chip"},escapeHtml(sites[i].name)));
+    });
+  }
+}
+
+/* Manage */
+function renderManage(){
+  const tBox=$("#topicsList"); tBox.innerHTML="";
+  topics.forEach(t=>{
+    const wrap=el("div",{class:"card"});
+    const names=t.siteIds.map(i=>sites[i]?.name).filter(Boolean).join(", ");
+    wrap.innerHTML=`
+      <div class="row" style="justify-content:space-between">
+        <div><b>${escapeHtml(t.name)}</b></div>
+        <div class="row">
+          <button data-ed="${t.id}">Edit</button>
+          <button data-del="${t.id}" style="border-color:var(--bad);color:var(--bad)">Delete</button>
+        </div>
+      </div>
+      <div class="note" style="margin-top:6px"><b>Headwords:</b> ${escapeHtml(t.words)}</div>
+      <div class="note" style="margin-top:4px"><b>Sites:</b> ${escapeHtml(names||"(all)")}</div>`;
+    wrap.querySelector(`[data-del="${t.id}"]`).onclick=()=>{
+      if(!confirm(`Delete topic "${t.name}"?`))return;
+      topics=topics.filter(x=>x.id!==t.id);
+      delete ui.sel[t.id];
+      if(ui.activeTopicId===t.id)ui.activeTopicId=topics[0]?.id||null;
+      save(SK.topics,topics);save(SK.ui,ui);renderTabs();renderPills();renderManage();refresh();
+    };
+    wrap.querySelector(`[data-ed="${t.id}"]`).onclick=()=>editTopic(t.id);
+    tBox.appendChild(wrap);
+  });
+
+  const sBox=$("#sitesList"); sBox.innerHTML="";
+  sites.forEach((s,i)=>{
+    const row=el("div",{class:"row"});
+    row.innerHTML=`<span class="source-chip">${escapeHtml(s.name)}</span>
+      <small class="note" style="max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.url)}</small>
+      <button data-rm="${i}" style="border-color:var(--bad);color:var(--bad)">Remove</button>`;
+    row.querySelector(`[data-rm="${i}"]`).onclick=()=>{
+      if(!confirm(`Remove site "${s.name}"?`))return;
+      removeSiteAt(i);
+      renderManage(); renderPills(); refresh();
+    };
+    sBox.appendChild(row);
+  });
+
+  const tSites=$("#tSites"); tSites.innerHTML="";
+  sites.forEach((s,i)=>{
+    const lab=el("label",{style:"display:inline-flex;gap:6px;align-items:center;margin-right:8px;margin-bottom:6px"});
+    lab.innerHTML=`<input type="checkbox" data-site="${i}"> ${escapeHtml(s.name)}`;
+    tSites.appendChild(lab);
+  });
+}
+function editTopic(id){
+  const t=topics.find(x=>x.id===id); if(!t)return;
+  $("#tName").value=t.name; $("#tWords").value=t.words;
+  document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=t.siteIds?.includes(+cb.dataset.site)||false);
+  $("#addTopic").textContent="Save changes";
+  $("#addTopic").onclick=()=>{
+    t.name=$("#tName").value.trim()||t.name;
+    t.words=$("#tWords").value.trim();
+    t.siteIds=Array.from(document.querySelectorAll('#tSites input[type="checkbox"]:checked')).map(cb=>+cb.dataset.site);
+    save(SK.topics,topics);
+    $("#tName").value=""; $("#tWords").value=""; document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=false);
+    $("#addTopic").textContent="Add topic"; $("#addTopic").onclick=addTopic;
+    renderTabs(); renderPills(); renderManage(); refresh();
+  };
+}
+function addTopic(){
+  const name=$("#tName").value.trim(); if(!name) return;
+  const words=$("#tWords").value.trim();
+  const siteIds=Array.from(document.querySelectorAll('#tSites input[type="checkbox"]:checked')).map(cb=>+cb.dataset.site);
+  topics.push({id:uid(), name, words, siteIds}); save(SK.topics,topics);
+  $("#tName").value=""; $("#tWords").value=""; document.querySelectorAll('#tSites input[type="checkbox"]').forEach(cb=>cb.checked=false);
+  renderTabs(); renderPills(); renderManage();
+}
+
+/* ---------- Fetch & parse (robust) ---------- */
+function fetchTextWithTimeout(url, ms = 12000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  return fetch(url, { signal: ctrl.signal })
+    .then(r => { if (!r.ok) throw new Error(r.status + " " + r.statusText); return r.text(); })
+    .finally(() => clearTimeout(id));
+}
+function looksLikeFeed(txt){ return /<(rss|feed|item|entry)\b/i.test(txt); }
+
+/* Generic list-page HTML → JSON with pagination (pages 1..MAX_PAGES) */
+async function scrapeListToJSON(baseUrl, domainRe, maxPages = MAX_PAGES){
+  const fetchHTML = async (u) => {
+    const tries = [
+      "https://r.jina.ai/http/" + u.replace(/^https?:\/\//,'https://'),
+      "https://api.allorigins.win/raw?url=" + encodeURIComponent(u)
+    ];
+    for (const t of tries){
+      try { const txt = await fetchTextWithTimeout(t, 12000); if (txt && txt.length>200) return txt; } catch {}
+    }
+    return "";
+  };
+  const makeAbs = (href, base) => { try { return new URL(href, base).href; } catch { return ""; } };
+
+  const pagesToFetch = new Set([baseUrl]);
+  const visited = new Set();
+  const items = [];
+  const seenLinks = new Set();
+
+  // Seed common patterns
+  for (let n=2; n<=Math.min(5,maxPages); n++){
+    [ baseUrl.replace(/\/?$/, '/') + 'page/' + n + '/',
+      baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'page=' + n,
+      baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'paged=' + n
+    ].forEach(u => pagesToFetch.add(u));
+  }
+
+  while (pagesToFetch.size && visited.size < maxPages){
+    const url = [...pagesToFetch].find(u => !visited.has(u));
+    if (!url) break;
+    visited.add(url);
+
+    const html = await fetchHTML(url);
+    if (!html) continue;
+
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const zone = doc.querySelector("main, #main, .main, .content, .container, body") || doc.body;
+
+    const anchors = [...zone.querySelectorAll("a")].filter(a=>{
+      const txt = (a.textContent||"").trim();
+      const href = a.getAttribute("href") || "";
+      if (!txt || txt.length < 10) return false;
+      if (txt.split(/\s+/).length < 2) return false;
+      if (!href || href.startsWith("#")) return false;
+      const abs = makeAbs(href, url);
+      if (domainRe && !domainRe.test(abs)) return false;
+      const cls = ((a.className||"")+" "+(a.parentElement?.className||"")).toLowerCase();
+      if (/(menu|nav|breadcrumb|footer|share|social|button|more|tag|category|author)/.test(cls)) return false;
+      return true;
+    });
+
+    anchors.forEach((a, i) => {
+      const href = makeAbs(a.getAttribute("href") || "", url);
+      if (!href || seenLinks.has(href)) return;
+      seenLinks.add(href);
+
+      const wrap = a.closest("article, li, .post, .entry, .news, .card") || a.parentElement;
+      const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
+      const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+      const m = /(\d{1,2}\s+[A-Za-z]{3,9},?\s+\d{4})/.exec(dtRaw);
+      const fallbackOffsetHours = (visited.size-1)*48 + i;
+      const when = m ? new Date(m[1]) : new Date(Date.now() - fallbackOffsetHours*3600e3);
+
+      const p = wrap && (wrap.querySelector("p, .excerpt") || null);
+      const summary = p ? p.textContent.trim() : "";
+
+      if (domainRe && !domainRe.test(href)) return;
+      items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
+    });
+
+    const pagLinks = [
+      ...doc.querySelectorAll('a[rel="next"], .pagination a, nav.pagination a, a.page-numbers, a.next, a.nextpostslink')
+    ].map(a => makeAbs(a.getAttribute("href") || "", url))
+     .filter(h => h && (!domainRe || domainRe.test(h)));
+
+    for (const purl of pagLinks){
+      if (pagesToFetch.size >= maxPages) break;
+      pagesToFetch.add(purl);
+    }
+  }
+
+  return JSON.stringify({ items });
+}
+
+/* PMO: HTML → JSON fallback (single page if needed) */
+async function scrapePMOAsJSON() {
+  const base = "https://www.pmindia.gov.in/en/news-updates/";
+  const targets = [
+    "https://r.jina.ai/http/https://www.pmindia.gov.in/en/news-updates/",
+    "https://r.jina.ai/http/http://www.pmindia.gov.in/en/news-updates/",
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(base)
+  ];
+  let html = "";
+  for (const u of targets) {
+    try { const t = await fetchTextWithTimeout(u, 12000); if (t && t.length>200) { html=t; break; } } catch {}
+  }
+  if (!html) throw new Error("PMO list HTML not reachable");
+
+  const makeAbs = (href) => { try { return new URL(href, base).href; } catch { return ""; } };
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const zone = doc.querySelector("main, #main, .main, .content, .container") || doc.body;
+
+  const anchors = [...zone.querySelectorAll("a")].filter(a=>{
+    const txt = (a.textContent||"").trim();
+    const href = a.getAttribute("href") || "";
+    if (!txt || txt.length < 10) return false;
+    if (txt.split(/\s+/).length < 2) return false;
+    if (!href || href.startsWith("#")) return false;
+    const abs = makeAbs(href);
+    if (!/pmindia\.gov\.in/i.test(abs)) return false;
+    const cls = (a.className||"") + " " + (a.parentElement?.className||"");
+    if (/(menu|nav|breadcrumb|footer|share|social)/i.test(cls)) return false;
+    return true;
+  });
+
+  const seen = new Set();
+  const items = [];
+  anchors.forEach((a, i) => {
+    const href = makeAbs(a.getAttribute("href") || "");
+    if (!href || seen.has(href)) return;
+    seen.add(href);
+
+    const wrap = a.closest("article, li, .post, .news, .entry") || a.parentElement;
+    const dtEl = wrap && (wrap.querySelector("time, .date, .entry-date"));
+    const dtRaw = dtEl ? (dtEl.getAttribute("datetime") || dtEl.textContent || "") : "";
+    let when;
+    const m = /(\d{1,2}\s+[A-Za-z]{3},?\s+\d{4})/.exec(dtRaw);
+    if (m) { when = new Date(m[1]); } else { when = new Date(Date.now() - i*3600e3); }
+
+    const p = wrap && wrap.querySelector("p");
+    const summary = p ? p.textContent.trim() : "";
+
+    items.push({ title: a.textContent.trim(), url: href, date_published: when, summary });
+  });
+
+  return JSON.stringify({ items });
+}
+
+/* PMO: WordPress JSON API with pagination (pages 1..MAX_PAGES) */
+async function fetchPMOWordPressJSON(pages = MAX_PAGES){
+  const base = "https://www.pmindia.gov.in/en/wp-json/wp/v2/posts?per_page=25&_fields=link,title,excerpt,date";
+  const mirrors = [
+    "https://r.jina.ai/http/" + base,
+    "https://api.allorigins.win/raw?url=" + encodeURIComponent(base)
+  ];
+  const items = [];
+  for (let page=1; page<=pages; page++){
+    let got=false;
+    for (const m of mirrors){
+      try{
+        const t = await fetchTextWithTimeout(m + "&page=" + page, 12000);
+        if (t && t.trim().startsWith("[")) {
+          const arr = JSON.parse(t);
+          if (Array.isArray(arr) && arr.length){
+            arr.forEach(x=>{
+              items.push({
+                title: (x.title?.rendered||"").replace(/<[^>]*>/g,"").trim(),
+                url: x.link,
+                date_published: x.date,
+                summary: (x.excerpt?.rendered||"").replace(/<[^>]*>/g,"").trim()
+              });
+            });
+            got=true;
+            break;
+          }
+        }
+      }catch{}
+    }
+    if (!got) break;
+  }
+  if (items.length) return JSON.stringify({ items });
+  throw new Error("wp-json fallback failed");
+}
+
+/* Try: direct/proxy RSS → JSON (obj/array) → feed2json → site-specific fallbacks */
+async function fetchFeed(inputUrl) {
+  let url = String(inputUrl||"");
+
+  /* Google News “topics/…” → “/rss/topics/…” */
+  if (/^https?:\/\/news\.google\.com\/topics\//i.test(url) && !/\/rss\//i.test(url)){
+    url = url.replace(/\/topics\//i, '/rss/topics/');
+  }
+
+  /* If AIR category or PMO list page pasted, try their /feed/ first */
+  const extras = [];
+  if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)){
+    extras.push(url.replace(/\/?$/, '/feed/'));
+  }
+  if (/^https?:\/\/www\.pmindia\.gov\.in\/en\/news-updates\/?$/i.test(url)){
+    extras.push(url.replace(/\/?$/, '/feed/'));
+  }
+
+  const ttl = 180;
+  const noProto = url.replace(/^https?:\/\//,'');
+  const attempts = [
+    ...extras,
+    ...(FAST_PROXY ? [`${FAST_PROXY}/fetch?u=${encodeURIComponent(url)}&ttl=${ttl}`] : []),
+    url,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://r.jina.ai/http/${url}`,
+    `https://r.jina.ai/http/${noProto}`
+  ];
+
+  let lastErr;
+  for (const u of attempts) {
+    try {
+      const txt = await fetchTextWithTimeout(u, 12000);
+      const t = (txt||"").trim();
+      if (t && (looksLikeFeed(t) || t.startsWith("{") || t.startsWith("["))) return t;
+    } catch(e){ lastErr = e; }
+  }
+
+  /* feed2json — only if it returns items */
+  try{
+    const fj = `https://feed2json.org/v1?url=${encodeURIComponent(url)}`;
+    const js = await fetchTextWithTimeout(fj, 12000);
+    const t = (js||"").trim();
+    if (t.startsWith("{")) {
+      const obj = JSON.parse(t);
+      if (obj && Array.isArray(obj.items) && obj.items.length > 0) return t;
+    }
+  }catch(e){ lastErr = e; }
+
+  /* PMO fallbacks (paginate) */
+  if (/pmindia\.gov\.in\/en\/news-updates(\/feed\/)?$/i.test(url)) {
+    try { return await fetchPMOWordPressJSON(MAX_PAGES); } catch(e){ lastErr = e; }
+    try { return await scrapeListToJSON("https://www.pmindia.gov.in/en/news-updates/", /pmindia\.gov\.in/i, MAX_PAGES); } catch(e){ lastErr = e; }
+  }
+
+  /* AIR category pages — paginate */
+  if (/^https?:\/\/www\.newsonair\.gov\.in\/category\/[^/]+\/?$/i.test(url)) {
+    try { return await scrapeListToJSON(url, /newsonair\.gov\.in/i, MAX_PAGES); } catch(e){ lastErr = e; }
+  }
+
+  throw lastErr || new Error("All fallbacks failed");
+}
+
+function parseItems(payload, siteName) {
+  if (!payload) return [];
+  const trimmed = payload.trim();
+
+  /* JSON OBJECT: { items: [...] } */
+  if (trimmed.startsWith("{")) {
+    try {
+      const data = JSON.parse(trimmed);
+      const items = Array.isArray(data.items) ? data.items : [];
+      const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
+      return items.map(it => {
+        const title = it.title || strip(it.summary || "") || "(no title)";
+        const link  = it.url || it.link || it.external_url || (typeof it.id==="string"?it.id:"");
+        const date  = new Date(it.date_published || it.date_modified || it.date || Date.now());
+        const summary = strip(it.summary || it.content_text || it.content_html || it.excerpt || "");
+        return { title, link, date, source: siteName, summary };
+      }).filter(x=>x.title && x.link);
+    } catch { return []; }
+  }
+
+  /* JSON ARRAY: [ {...}, ... ] (WordPress, etc.) */
+  if (trimmed.startsWith("[")) {
+    try {
+      const arr = JSON.parse(trimmed);
+      const norm = (x)=>({
+        title: (x.title?.rendered || x.title || "").replace(/<[^>]*>/g,"").trim(),
+        link:  x.link || x.url || "",
+        date:  new Date(x.date || x.published || Date.now()),
+        summary: (x.excerpt?.rendered || x.summary || x.content?.rendered || "").replace(/<[^>]*>/g,"").trim()
+      });
+      return (Array.isArray(arr)?arr:[]).map(norm).filter(x=>x.title && x.link);
+    } catch { return []; }
+  }
+
+  /* XML path (RSS/Atom) */
+  let doc; try { doc = new DOMParser().parseFromString(payload, "text/xml"); } catch { return []; }
+  const out = [], items=[...doc.querySelectorAll("item")], entries=[...doc.querySelectorAll("entry")];
+  const txt = (el, sel) => (el.querySelector(sel)?.textContent || "").trim();
+  const contentEncoded = el => {
+    const n = el.getElementsByTagName("content:encoded");
+    return n && n[0] ? (n[0].textContent || "").trim() : "";
+  };
+  const strip = s => (s || "").replace(/<[^>]*>/g, "").trim();
+  items.forEach(it=>{
+    const link = txt(it,"link") || it.querySelector("link")?.getAttribute("href") || "";
+    const pub  = new Date(txt(it,"pubDate") || txt(it,"date") || Date.now());
+    out.push({title:txt(it,"title"), link, date:pub, source:siteName, summary:strip(txt(it,"description") || contentEncoded(it))});
+  });
+  entries.forEach(en=>{
+    const link = en.querySelector("link")?.getAttribute("href") || txt(en,"link");
+    const pub  = new Date(txt(en,"updated") || txt(en,"published") || Date.now());
+    out.push({title:txt(en,"title"), link, date:pub, source:siteName, summary:strip(txt(en,"summary") || txt(en,"content"))});
+  });
+  return out.filter(x=>x.title&&x.link);
+}
+
+/* ---------- Filter & render ---------- */
+function buildMatcher(wordsCSV){
+  const canon = s => (" " + String(s||"")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() + " ");
+  const toks = wordsCSV.split(",").map(s=>s.trim()).filter(Boolean).map(t => " " + canon(t).trim() + " ");
+  if(!toks.length) return ()=>true;
+  return (title,summary)=> {
+    const hay = canon((title||"") + " " + (summary||""));
+    return toks.some(tok => hay.includes(tok));
+  };
+}
+function normalizeTitle(s){return (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();}
+
+/* Progressive, fast refresh */
+async function refresh(){
+  const t=activeTopic(); if(!t){$("#results").innerHTML="";return;}
+  $("#status").classList.remove("hide"); $("#results").innerHTML="";
+  $("#age").value = (ui.age ?? "1d");
+  $("#dedupe").checked=!!ui.dedupe;
+
+  const siteIdx=activeSites();
+  const since=parseAgeVal($("#age").value);
+  const selected = (ui.sel && ui.sel[t.id]) ? ui.sel[t.id] : [];
+  const wordCSV = selected.length ? selected.join(",") : ""; // 'All' => no filter
+  const match=buildMatcher(wordCSV);
+  const wantDedupe=$("#dedupe").checked;
+
+  const all=[], errs=[];
+  const queue=[...siteIdx];
+  let done = 0;
+
+  function renderNow(){
+    let filtered = all
+      .filter(it=>!since || it.date>=since)
+      .filter(it=>match(it.title,it.summary))
+      .sort((a,b)=>b.date-a.date);
+
+    if(wantDedupe){
+      const seen=new Set();
+      filtered=filtered.filter(it=>{const k=normalizeTitle(it.title); if(seen.has(k))return false; seen.add(k); return true;});
+    }
+
+    const cards = filtered.map(it=>`
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><a href="${it.link}" target="_blank" rel="noopener"><b>${escapeHtml(it.title)}</b></a></div>
+          <div class="note">${escapeHtml(it.source)} • ${escapeHtml(ago(it.date))}</div>
+        </div>
+        <div class="note" style="margin-top:6px">${escapeHtml((it.summary||"").slice(0,220))}${(it.summary||"").length>220?'…':''}</div>
+      </div>`).join("");
+
+    let body;
+    if (cards) {
+      body = cards;
+    } else if (done === siteIdx.length) {
+      body = `<div class="card">No stories matched your filters.</div>`;
+    } else {
+      body = `<div class="card">Fetching… (sources ${done}/${siteIdx.length})</div>`;
+    }
+
+    const progress = `<div class="note" style="margin-top:10px">
+      Fetched ${done}/${siteIdx.length} sources${errs.length?` — some failed: ${escapeHtml(errs.join("; "))}`:""}.
+    </div>`;
+
+    $("#results").innerHTML = body + progress;
+  }
+
+  const WORKERS = Math.min(6, queue.length);
+  await Promise.all(new Array(WORKERS).fill(0).map(async ()=>{
+    while (queue.length){
+      const i = queue.shift();
+      const s = sites[i];
+      try{
+        const payload = await fetchFeed(s.url);
+        parseItems(payload, s.name).forEach(it => all.push(it));
+      }catch(e){
+        const msg = (e && e.name === "AbortError") ? "Timed out" : (e?.message || String(e));
+        errs.push(`${s.name}: ${msg}`);
+      }finally{
+        done++; renderNow();
+      }
+    }
+  }));
+
+  $("#status").classList.add("hide");
+}
+
+/* ---------- Events ---------- */
+$("#refresh").onclick=()=>{ui.age=$("#age").value; ui.dedupe=$("#dedupe").checked; save(SK.ui,ui); refresh();};
+$("#manageBtn").onclick=()=>{$("#managePanel").classList.toggle("hide"); renderManage();};
+$("#addTopic").onclick=addTopic;
+$("#addSite").onclick=()=>{
+  const name=$("#sName").value.trim(), url=$("#sUrl").value.trim();
+  if(!name || !/^https?:\/\//i.test(url)) return alert("Add a valid site name and feed URL (https://…)"); 
+  sites.push({name,url}); save(SK.sites,sites); $("#sName").value=""; $("#sUrl").value=""; renderManage();
+};
+$("#saveCfg").onclick=()=>{
+  const blob=new Blob([JSON.stringify({sites,topics,ui},null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="current-affairs-config.json"; a.click(); URL.revokeObjectURL(url);
+};
+$("#loadCfg").addEventListener("change",(e)=>{
+  const f=e.target.files?.[0]; if(!f)return;
+  const r=new FileReader(); r.onload=()=>{ try{
+    const data=JSON.parse(r.result);
+    if(Array.isArray(data.sites)) sites=data.sites;
+    if(Array.isArray(data.topics)) topics=data.topics;
+    if(data.ui) ui=data.ui;
+    ui.sel = ui.sel || {};
+    save(SK.sites,sites); save(SK.topics,topics); save(SK.ui,ui);
+    renderTabs(); renderPills(); renderManage(); refresh();
+  }catch(_){ alert("Invalid JSON"); } }; r.readAsText(f);
+});
+$("#resetCfg").onclick=()=>{
+  if(!confirm("Reset to built-in sites & topics and clear saved UI?")) return;
+  localStorage.removeItem(SK.sites);
+  localStorage.removeItem(SK.topics);
+  localStorage.removeItem(SK.ui);
+  location.reload();
+};
+
+/* ---------- Boot ---------- */
+renderTabs(); if(!ui.activeTopicId&&topics[0]){ui.activeTopicId=topics[0].id; save(SK.ui,ui);}
+renderPills(); renderManage(); refresh();
+</script>
+</body>
+</html>
