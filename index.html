@@ -36,6 +36,9 @@ small{color:var(--muted)}
 @keyframes spin{to{transform:rotate(360deg)}}
 hr.sep{border:0;border-top:1px solid var(--line);opacity:.6;margin:10px 0}
 .source-chip{border:1px solid var(--line);padding:4px 8px;border-radius:999px;font-size:12px}
+/* NEW: toggleable source chips */
+.source-chip.toggle{cursor:pointer}
+.source-chip.off{opacity:.45;filter:grayscale(60%);border-color:#394061;text-decoration:line-through}
 .k{font-weight:600}
 .note{color:var(--muted);font-size:12px}
 #addTabBtn{font-weight:700;opacity:.9}
@@ -122,7 +125,7 @@ let sites = load(SK.sites) || [
   {name:"Google News — Appointments India", url:"https://news.google.com/rss/search?q=appointment+OR+%22takes+charge%22+OR+%22assumes+office%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Obituary India",     url:"https://news.google.com/rss/search?q=obituary+OR+%22passes+away%22+India&hl=en-IN&gl=IN&ceid=IN:en"},
   { name:"Google News — Joint Military Exercise (India)",
-  url:"https://news.google.com/rss/search?q=(%22joint%20military%20exercise%22%20OR%20%22joint%20exercise%22%20OR%20%22bilateral%20exercise%22%20OR%20%22multilateral%20exercise%22)%20(India%20OR%20%22Indian%20Army%22%20OR%20%22Indian%20Navy%22%20OR%20IAF%20OR%20%22Armed%20Forces%20of%20India%22)&hl=en-IN&gl=IN&ceid=IN:en" },
+    url:"https://news.google.com/rss/search?q=(%22joint%20military%20exercise%22%20OR%20%22joint%20exercise%22%20OR%20%22bilateral%20exercise%22%20OR%20%22multilateral%20exercise%22)%20(India%20OR%20%22Indian%20Army%22%20OR%20%22Indian%20Navy%22%20OR%20IAF%20OR%20%22Armed%20Forces%20of%20India%22)&hl=en-IN&gl=IN&ceid=IN:en" },
   {name:"BBC News — India",          url:"https://feeds.bbci.co.uk/news/world/asia/india/rss.xml"},
   {name:"Reuters — India Top News",  url:"https://feeds.reuters.com/reuters/INtopNews"},
   {name:"Reuters — India Business",  url:"https://feeds.reuters.com/reuters/INbusinessNews"},
@@ -150,41 +153,23 @@ let sites = load(SK.sites) || [
   {name:"AIR News — National", url:"https://www.newsonair.gov.in/National_rss.aspx"},
   {name:"PIB — Press Releases (National, English)", url:"https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"},
   {name:"Google News — Defence India", url:"https://news.google.com/rss/search?q=Defence+India+OR+DRDO+OR+missile+OR+%22joint+exercise%22&hl=en-IN&gl=IN&ceid=IN:en"},
-  // ——— Test firing + missile ———
-{ name:"Google News — “test firing” + missile (strict)",
-  url:"https://news.google.com/rss/search?q=%22test+firing%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
-  { name:"GNews — PM inaugurate", url:"https://news.google.com/rss/search?q=PM+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
-{ name:"GNews — Prime Minister inaugurate", url:"https://news.google.com/rss/search?q=%22Prime+Minister%22+inaugurate&hl=en-IN&gl=IN&ceid=IN:en" },
-{ name:"GNews — “PM to inaugurate”", url:"https://news.google.com/rss/search?q=%22PM+to+inaugurate%22&hl=en-IN&gl=IN&ceid=IN:en" },
-// Optional broad one:
-{ name:"GNews — PM/PMO inaugurations (broad)", url:"https://news.google.com/rss/search?q=%28PM+inaugurate+OR+PM+inaugurates+OR+%22PM+to+inaugurate%22+OR+%22Prime+Minister%22+inaugurate+OR+%22Prime+Minister%22+inaugurates%29&hl=en-IN&gl=IN&ceid=IN:en" },
-
-{ name:"Google News — test-firing + missile (broader)",
-  url:"https://news.google.com/rss/search?q=%28%22test+firing%22+OR+test-firing+OR+%22test+fired%22+OR+%22test-fired%22+OR+%22test+fire%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
-
-// ——— Test flight + missile ———
-{ name:"Google News — “test flight” + missile (strict)",
-  url:"https://news.google.com/rss/search?q=%22test+flight%22+missile&hl=en-IN&gl=IN&ceid=IN:en" },
-
-{ name:"Google News — test flight / flight test + missile (broader)",
-  url:"https://news.google.com/rss/search?q=%28%22test+flight%22+OR+%22flight+test%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en" },
-  { name:"Google News — INS / Indian Navy (India)",
-  url:"https://news.google.com/rss/search?q=%28INS+OR+%22Indian+Navy%22+OR+%22Indian+Naval+Ship%22+OR+warship+OR+frigate+OR+destroyer+OR+corvette+OR+submarine+OR+carrier%29+India+-insurance+-insulin+-instagram&hl=en-IN&gl=IN&ceid=IN:en" },
-  // Strict: requires the exact phrase “successfully conducts” + flight test(s)
-{ name:"Google News — DRDO ‘successfully conducts’ flight tests (strict)",
-  url:"https://news.google.com/rss/search?q=DRDO+%22successfully+conducts%22+%28%22flight+test%22+OR+%22flight+tests%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
-
-// Broader: catches wording variants (successful, tests, test-fired, flight trials, etc.)
-{ name:"Google News — DRDO flight tests (broader)",
-  url:"https://news.google.com/rss/search?q=%28DRDO+OR+%22Defence+Research+and+Development+Organisation%22%29+%28successfully+OR+successful%29+%28conducts+OR+tests+OR+test-fired+OR+%22carries+out%22%29+%28%22flight+test%22+OR+%22flight+tests%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29&hl=en-IN&gl=IN&ceid=IN:en" },
+  {name:"Google News — “test firing” + missile (strict)", url:"https://news.google.com/rss/search?q=%22test+firing%22+missile&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"GNews — PM inaugurate", url:"https://news.google.com/rss/search?q=PM+inaugurate&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"GNews — Prime Minister inaugurate", url:"https://news.google.com/rss/search?q=%22Prime+Minister%22+inaugurate&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"GNews — “PM to inaugurate”", url:"https://news.google.com/rss/search?q=%22PM+to+inaugurate%22&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"GNews — PM/PMO inaugurations (broad)", url:"https://news.google.com/rss/search?q=%28PM+inaugurate+OR+PM+inaugurates+OR+%22PM+to+inaugurate%22+OR+%22Prime+Minister%22+inaugurate+OR+%22Prime+Minister%22+inaugurates%29&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — test-firing + missile (broader)", url:"https://news.google.com/rss/search?q=%28%22test+firing%22+OR+test-firing+OR+%22test+fired%22+OR+%22test-fired%22+OR+%22test+fire%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — “test flight” + missile (strict)", url:"https://news.google.com/rss/search?q=%22test+flight%22+missile&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — test flight / flight test + missile (broader)", url:"https://news.google.com/rss/search?q=%28%22test+flight%22+OR+%22flight+test%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29+%28missile+OR+missiles%29&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — INS / Indian Navy (India)", url:"https://news.google.com/rss/search?q=%28INS+OR+%22Indian+Navy%22+OR+%22Indian+Naval+Ship%22+OR+warship+OR+frigate+OR+destroyer+OR+corvette+OR+submarine+OR+carrier%29+India+-insurance+-insulin+-instagram&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — DRDO ‘successfully conducts’ flight tests (strict)", url:"https://news.google.com/rss/search?q=DRDO+%22successfully+conducts%22+%28%22flight+test%22+OR+%22flight+tests%22%29&hl=en-IN&gl=IN&ceid=IN:en"},
+  {name:"Google News — DRDO flight tests (broader)", url:"https://news.google.com/rss/search?q=%28DRDO+OR+%22Defence+Research+and+Development+Organisation%22%29+%28successfully+OR+successful%29+%28conducts+OR+tests+OR+test-fired+OR+%22carries+out%22%29+%28%22flight+test%22+OR+%22flight+tests%22+OR+%22flight+testing%22+OR+%22flight+trial%22+OR+%22flight+trials%22%29&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Times of India — environment", url:"https://timesofindia.indiatimes.com/rssfeeds/2647163.cms"},
-  { name: "TOI — sports", url: "https://timesofindia.indiatimes.com/rssfeeds/4719148.cms" },
-  { name:"LiveMint — environmentWildlife", url:"https://www.livemint.com/rss/news" },
-  { name:"LiveMint — News", url:"https://www.livemint.com/rss/news" },
-  { name:"The Hindu — environment", url:"https://www.thehindu.com/news/national/feeder/default.rss" },
-
-{ name:"Google News — Ship / Warship (India)",
-  url:"https://news.google.com/rss/search?q=%28ship+OR+vessel+OR+warship+OR+frigate+OR+destroyer+OR+submarine+OR+carrier%29+India+-shipping+-shipment&hl=en-IN&gl=IN&ceid=IN:en" },
+  {name:"TOI — sports", url:"https://timesofindia.indiatimes.com/rssfeeds/4719148.cms"},
+  {name:"LiveMint — environmentWildlife", url:"https://www.livemint.com/rss/news"},
+  {name:"LiveMint — News", url:"https://www.livemint.com/rss/news"},
+  {name:"The Hindu — environment", url:"https://www.thehindu.com/news/national/feeder/default.rss"},
+  {name:"Google News — Ship / Warship (India)", url:"https://news.google.com/rss/search?q=%28ship+OR+vessel+OR+warship+OR+frigate+OR+destroyer+OR+submarine+OR+carrier%29+India+-shipping+-shipment&hl=en-IN&gl=IN&ceid=IN:en"},
   {name:"Google News — Economy/RBI",   url:"https://news.google.com/rss/search?q=RBI+OR+repo+rate+OR+CPI+inflation+OR+GDP+India&hl=en-IN&gl=IN&ceid=IN:en"}
 ];
 
@@ -268,7 +253,14 @@ function renderTabs(){
   bar.appendChild(plus);
 }
 function activeTopic(){return topics.find(x=>x.id===ui.activeTopicId)||topics[0]||null;}
-function activeSites(){const t=activeTopic();if(!t)return[];const ids=(t.siteIds&&t.siteIds.length)?t.siteIds:sites.map((_,i)=>i);return ids.filter(i=>sites[i]);}
+
+/* NEW: activeSites respects “all” when siteIds is undefined */
+function activeSites(){
+  const t = activeTopic(); if(!t) return [];
+  if (!('siteIds' in t)) return sites.map((_,i)=>i); // no property ⇒ all
+  return (Array.isArray(t.siteIds) ? t.siteIds : []).filter(i=>sites[i]);
+}
+
 function wordsForActive(){const t=activeTopic();return (t?.words||"").split(",").map(s=>s.trim()).filter(Boolean);}
 
 /* Quick-add (＋) */
@@ -310,11 +302,36 @@ function renderPills(){
     holder.appendChild(sp);
   });
 
+  /* NEW: toggleable source chips (persist per topic) */
   const siteIdx = activeSites();
-  if (siteIdx.length){
+  const tAct = activeTopic();
+
+  // keep a pool so disabled chips still show
+  tAct.sitePool = Array.from(new Set([...(tAct.sitePool||[]), ...siteIdx]));
+  save(SK.topics,topics);
+
+  if ((tAct.sitePool||[]).length){
     holder.appendChild(el("span",{class:"pill action"},"•"));
-    siteIdx.forEach(i=>{
-      holder.appendChild(el("span",{class:"pill source-chip"},escapeHtml(sites[i].name)));
+    (tAct.sitePool||[]).filter(i=>sites[i]).forEach(i=>{
+      const included = !('siteIds' in tAct) ? true : (tAct.siteIds||[]).includes(i);
+      const chip = el(
+        "span",
+        { class:"pill source-chip toggle"+(included?"":" off"), "data-site":i,
+          title: included ? "Tap to disable this feed for this tab" : "Tap to enable this feed for this tab"
+        },
+        escapeHtml(sites[i].name)
+      );
+      chip.onclick = ()=>{
+        const T = activeTopic(); if(!T) return;
+        // materialize full list if currently “all”
+        if (!('siteIds' in T)) T.siteIds = sites.map((_,j)=>j);
+        T.siteIds = T.siteIds || [];
+        const pos = T.siteIds.indexOf(i);
+        if (pos>=0) T.siteIds.splice(pos,1); else T.siteIds.push(i);
+        save(SK.topics,topics);
+        renderPills(); refresh();
+      };
+      holder.appendChild(chip);
     });
   }
 }
@@ -324,7 +341,9 @@ function renderManage(){
   const tBox=$("#topicsList"); tBox.innerHTML="";
   topics.forEach(t=>{
     const wrap=el("div",{class:"card"});
-    const names=t.siteIds.map(i=>sites[i]?.name).filter(Boolean).join(", ");
+    const names = Array.isArray(t.siteIds)
+      ? t.siteIds.map(i=>sites[i]?.name).filter(Boolean).join(", ")
+      : ""; // undefined ⇒ all
     wrap.innerHTML=`
       <div class="row" style="justify-content:space-between">
         <div><b>${escapeHtml(t.name)}</b></div>
